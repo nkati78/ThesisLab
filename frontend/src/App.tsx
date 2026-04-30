@@ -949,7 +949,7 @@ function App() {
         )}
 
         {/* Spacer for sticky bottom bar */}
-        <div style={{ height: hasSelectedStrategy ? '100px' : '90px' }} />
+        <div style={{ height: hasSelectedStrategy ? '160px' : '90px' }} />
       </main>
 
       {/* ── Sticky bottom bar ── */}
