@@ -337,6 +337,7 @@ function App() {
   const [endDate, setEndDate] = useState('2024-01-03');
   const [startingCash, setStartingCash] = useState(100000);
   const [commission, setCommission] = useState(0.65);
+  const [dataSource, setDataSource] = useState<'synthetic' | 'thetadata'>('synthetic');
   const [result, setResult] = useState<BacktestResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -477,7 +478,7 @@ function App() {
           commission,
           strategy: finalStrategy,
           advanced_filters: filters,
-          data_source: 'synthetic',
+          data_source: dataSource,
           synthetic_config: syntheticConfig,
         }),
         new Promise((r) => setTimeout(r, 3000)), // minimum 3s display
@@ -709,7 +710,32 @@ function App() {
                         onChange={(e) => handleSetCommission(Number(e.target.value))} />
                     </div>
                   </div>
+                  <div>
+                    <label className="block mb-1" style={{ fontSize: '14px', color: '#d1d5db' }}>Data Source</label>
+                    <div style={{ display: 'inline-flex', borderRadius: '8px', backgroundColor: 'rgba(255,255,255,0.04)', padding: '3px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      {(['synthetic', 'thetadata'] as const).map((src) => (
+                        <button
+                          key={src}
+                          type="button"
+                          onClick={() => { setDataSource(src); markStale(); }}
+                          style={{
+                            padding: '6px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
+                            backgroundColor: dataSource === src ? 'hsl(var(--accent))' : 'transparent',
+                            color: dataSource === src ? 'hsl(var(--primary-foreground))' : '#9ca3af',
+                            border: 'none', cursor: 'pointer',
+                          }}
+                        >
+                          {src === 'synthetic' ? 'Synthetic' : 'ThetaData'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
+                {dataSource === 'thetadata' && (
+                  <p className="text-xs text-gray-500" style={{ marginTop: '0.75rem' }}>
+                    Using real EOD options data via ThetaData. First run for a new ticker/range may take a few minutes to fetch and cache locally; repeat runs are instant.
+                  </p>
+                )}
               </div>
             </div>
 

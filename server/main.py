@@ -13,6 +13,7 @@ from server.schemas import (
     BacktestRequest, BacktestResponse, TradeResult, IndicatorSnapshot,
 )
 from thesislab.data.fake_provider import FakeDataProvider
+from thesislab.data.provider import DataProvider
 from thesislab.engine.backtester import Backtester, BacktestConfig
 from thesislab.filters import EntryExitFilters, IndicatorFilter, TimeOfDayFilter
 from thesislab.strategies.butterfly import Butterfly, ButterflyType
@@ -276,13 +277,26 @@ def run_backtest(req: BacktestRequest):
     start = datetime.strptime(req.start_date, "%Y-%m-%d").date()
     end = datetime.strptime(req.end_date, "%Y-%m-%d").date()
 
-    provider = FakeDataProvider(
-        ticker=req.ticker.upper(),
-        start_price=req.synthetic_config.start_price,
-        daily_drift=req.synthetic_config.daily_drift,
-        base_iv=req.synthetic_config.base_iv,
-        seed=req.synthetic_config.seed,
-    )
+    provider: DataProvider
+    if req.data_source == "thetadata":
+        # Lazy-import so synthetic-only setups don't pay the import cost
+        from thesislab.data.thetadata_provider import ThetaDataProvider
+        try:
+            provider = ThetaDataProvider(
+                ticker=req.ticker.upper(),
+                start_date=start, end_date=end,
+            )
+        except RuntimeError as e:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        provider = FakeDataProvider(
+            ticker=req.ticker.upper(),
+            start_price=req.synthetic_config.start_price,
+            daily_drift=req.synthetic_config.daily_drift,
+            base_iv=req.synthetic_config.base_iv,
+            seed=req.synthetic_config.seed,
+        )
 
     strategy = _build_strategy(req.strategy)
     filters = _build_filters(req.advanced_filters)
