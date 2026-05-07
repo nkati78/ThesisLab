@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from thesislab.domain import CloseSignal, ExitReason, Leg, OptionType, OptionsChain, Position, Trade
-from thesislab.strategies.utils import find_current_contract, intrinsic_value
+from thesislab.strategies.utils import find_current_contract, intrinsic_value, check_non_pnl_exits
 
 
 @dataclass
@@ -23,6 +23,10 @@ class IronCondor:
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 2.00  # close at 2x credit received
     close_at_dte: int = 10
+    close_at_profit_enabled: bool = False
+    close_at_loss_enabled: bool = False
+    close_at_dte_enabled: bool = False
+    close_on_short_breach: bool = False
 
     def scan(self, chain: OptionsChain, current_positions: list[Position]) -> list[Trade]:
         active = [p for p in current_positions if p.strategy_name == self.name]
@@ -74,28 +78,32 @@ class IronCondor:
         return [Trade(legs=legs, trade_date=chain.quote_date, net_premium=net_credit)]
 
     def should_close(self, position: Position, chain: OptionsChain) -> CloseSignal | None:
-        legs = position.entry_trade.legs
-        dte = min(leg.contract.dte(chain.quote_date) for leg in legs)
-
-        if dte <= 0:
+        non_pnl = check_non_pnl_exits(
+            position, chain,
+            close_at_dte_enabled=self.close_at_dte_enabled, close_at_dte=self.close_at_dte,
+            close_on_short_breach=self.close_on_short_breach,
+        )
+        if non_pnl == ExitReason.EXPIRATION:
             return CloseSignal(self._close_at_expiration(position, chain), ExitReason.EXPIRATION)
+        if non_pnl is not None:
+            return CloseSignal(self._close_position(position, chain), non_pnl)
 
-        if dte <= self.close_at_dte:
-            return CloseSignal(self._close_position(position, chain), ExitReason.DTE_LIMIT)
+        if not (self.close_at_profit_enabled or self.close_at_loss_enabled):
+            return None
 
         cost_to_close = self._cost_to_close(position, chain)
         if cost_to_close is None:
             return None
 
         entry_credit = position.entry_trade.net_premium
+        if entry_credit <= 0:
+            return None
 
-        # Profit target
         profit = entry_credit - cost_to_close
-        if entry_credit > 0 and profit / entry_credit >= self.close_at_profit_pct:
+        if self.close_at_profit_enabled and profit / entry_credit >= self.close_at_profit_pct:
             return CloseSignal(self._close_position(position, chain), ExitReason.PROFIT_TARGET)
 
-        # Stop loss
-        if entry_credit > 0 and cost_to_close / entry_credit >= (1 + self.close_at_loss_pct):
+        if self.close_at_loss_enabled and cost_to_close / entry_credit >= (1 + self.close_at_loss_pct):
             return CloseSignal(self._close_position(position, chain), ExitReason.STOP_LOSS)
 
         return None

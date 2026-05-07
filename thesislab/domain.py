@@ -15,6 +15,7 @@ class ExitReason(Enum):
     STOP_LOSS = "stop_loss"
     DTE_LIMIT = "dte_limit"
     EXPIRATION = "expiration"
+    SHORT_BREACH = "short_breach"
 
 
 @dataclass(frozen=True)

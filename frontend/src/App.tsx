@@ -311,7 +311,11 @@ function App() {
   const [strategy, setStrategy] = useState<StrategyConfig>({
     type: '', min_dte: 25, max_dte: 45, short_delta: 0.25,
     spread_width: 5, max_positions: 1, close_at_profit_pct: 0.5,
-    close_at_loss_pct: 2.0, close_at_dte: 7, put_delta: -0.2, wing_width: 5,
+    close_at_loss_pct: 2.0, close_at_dte: 7,
+    close_at_profit_enabled: false, close_at_loss_enabled: false,
+    close_at_dte_enabled: false, close_on_short_breach: false,
+    entry_dow: 'any',
+    put_delta: -0.2, wing_width: 5,
   });
   const [filters, setFilters] = useState<AdvancedFilters>({
     time_of_day: { enabled: false, entry_start: '09:30', entry_end: '16:00', exit_start: '09:30', exit_end: '16:00' },
@@ -326,7 +330,6 @@ function App() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveName, setSaveName] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
-  const [exitEnabled, setExitEnabled] = useState(false);
   const [hoveredStrategy, setHoveredStrategy] = useState<string | null>(null);
 
   const [syntheticConfig] = useState<SyntheticDataConfig>({
@@ -336,15 +339,16 @@ function App() {
   const [startDate, setStartDate] = useState('2023-01-03');
   const [endDate, setEndDate] = useState('2024-01-03');
   const [startingCash, setStartingCash] = useState(100000);
-  const [commission, setCommission] = useState(0.65);
+  const [commission, setCommission] = useState(0);
   const [dataSource, setDataSource] = useState<'synthetic' | 'thetadata'>('synthetic');
   const [result, setResult] = useState<BacktestResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingElapsed, setLoadingElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [hasSelectedStrategy, setHasSelectedStrategy] = useState(false);
   const [isStale, setIsStale] = useState(false);
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const markStale = useCallback(() => { if (result) setIsStale(true); }, [result]);
 
@@ -384,7 +388,6 @@ function App() {
 
   const handleSetStrategy = (s: StrategyConfig) => { setStrategy(s); markStale(); };
   const handleSetFilters = (f: AdvancedFilters) => { setFilters(f); markStale(); };
-  const handleSetExitEnabled = (v: boolean) => { setExitEnabled(v); markStale(); };
   const handleSetTicker = (v: string) => { setTicker(v); markStale(); };
   const handleSetStartDate = (v: string) => { setStartDate(v); markStale(); };
   const handleSetEndDate = (v: string) => { setEndDate(v); markStale(); };
@@ -401,9 +404,15 @@ function App() {
   /* ── Summary chip helpers ── */
   type Chip = { label: string; value: string };
 
+  const fmtShortDate = (iso: string) => {
+    const [y, m, d] = iso.split('-');
+    return `${parseInt(m)}/${parseInt(d)}/${y.slice(2)}`;
+  };
+
   const strategySummary = (): Chip[] => {
     const chips: Chip[] = [];
     chips.push({ label: 'Strategy', value: STRATEGY_NAME_MAP[strategy.type] ?? strategy.type });
+    chips.push({ label: 'Range', value: `${fmtShortDate(startDate)} → ${fmtShortDate(endDate)}` });
     chips.push({ label: 'Expiry', value: `${strategy.min_dte}–${strategy.max_dte} days` });
     if (strategy.type !== 'straddle' && strategy.type !== 'short_straddle' && strategy.type !== 'protective_put') {
       chips.push({ label: 'Delta', value: strategy.short_delta.toFixed(2) });
@@ -411,16 +420,21 @@ function App() {
     if (strategy.type === 'protective_put') {
       chips.push({ label: 'Put Delta', value: strategy.put_delta.toFixed(2) });
     }
-    if (exitEnabled) {
-      chips.push({ label: 'Take Profit', value: `${(strategy.close_at_profit_pct * 100).toFixed(0)}%` });
-      const isCred = CREDIT_STRATEGIES.has(strategy.type);
-      chips.push({ label: 'Stop Loss', value: isCred ? `${strategy.close_at_loss_pct.toFixed(1)}x` : `${(strategy.close_at_loss_pct * 100).toFixed(0)}%` });
-      if (strategy.close_at_dte > 0) {
-        chips.push({ label: 'Close Before', value: `${strategy.close_at_dte} DTE` });
-      }
-    } else {
-      chips.push({ label: 'Exit', value: 'Hold until expiry' });
+    const exitChips: string[] = [];
+    if (strategy.close_at_profit_enabled) {
+      exitChips.push(`TP ${(strategy.close_at_profit_pct * 100).toFixed(0)}%`);
     }
+    if (strategy.close_at_loss_enabled) {
+      const isCred = CREDIT_STRATEGIES.has(strategy.type);
+      exitChips.push(`SL ${isCred ? `${strategy.close_at_loss_pct.toFixed(1)}x` : `${(strategy.close_at_loss_pct * 100).toFixed(0)}%`}`);
+    }
+    if (strategy.close_at_dte_enabled) {
+      exitChips.push(`Close ${strategy.close_at_dte}d`);
+    }
+    if (strategy.close_on_short_breach) {
+      exitChips.push('Short Breach');
+    }
+    chips.push({ label: 'Exit', value: exitChips.length > 0 ? exitChips.join(' · ') : 'Hold until expiry' });
     return chips;
   };
 
@@ -452,49 +466,51 @@ function App() {
     // Switch to loading — show progress bar on setup view
     setActiveSection('setup');
     setIsLoading(true);
-    setLoadingProgress(0);
+    setLoadingElapsed(0);
     setError(null);
     setResult(null);
     setIsStale(false);
 
-    // Animate progress bar (decelerating curve, caps at ~92%)
+    // Track elapsed seconds — bar fill is an indeterminate CSS animation.
     const startTime = Date.now();
     progressRef.current = setInterval(() => {
-      const elapsed = (Date.now() - startTime) / 1000;
-      const target = Math.min(92, 100 * (1 - Math.exp(-elapsed / 1.2)));
-      setLoadingProgress(target);
-    }, 80);
+      setLoadingElapsed((Date.now() - startTime) / 1000);
+    }, 250);
+
+    abortRef.current = new AbortController();
 
     try {
-      const finalStrategy = exitEnabled
-        ? strategy
-        : { ...strategy, close_at_profit_pct: 9999, close_at_loss_pct: 9999, close_at_dte: 0 };
-      const [res] = await Promise.all([
-        runBacktest({
-          ticker,
-          start_date: startDate,
-          end_date: endDate,
-          starting_cash: startingCash,
-          commission,
-          strategy: finalStrategy,
-          advanced_filters: filters,
-          data_source: dataSource,
-          synthetic_config: syntheticConfig,
-        }),
-        new Promise((r) => setTimeout(r, 3000)), // minimum 3s display
-      ]);
+      const res = await runBacktest({
+        ticker,
+        start_date: startDate,
+        end_date: endDate,
+        starting_cash: startingCash,
+        commission,
+        strategy,
+        advanced_filters: filters,
+        data_source: dataSource,
+        synthetic_config: syntheticConfig,
+      }, abortRef.current.signal);
       if (progressRef.current) clearInterval(progressRef.current);
-      setLoadingProgress(100);
-      await new Promise((r) => setTimeout(r, 300)); // brief pause at 100%
       setResult(res);
       setActiveSection('results');
       setChartTab('equity');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Backtest failed');
+      // User-cancelled abort — silently return to setup, no error banner
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // state already preserved
+      } else {
+        setError(err instanceof Error ? err.message : 'Backtest failed');
+      }
     } finally {
       if (progressRef.current) clearInterval(progressRef.current);
+      abortRef.current = null;
       setIsLoading(false);
     }
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
   };
 
   /* ── Step bar helpers ── */
@@ -650,19 +666,44 @@ function App() {
             <div className="card" style={{ maxWidth: '540px', width: '100%', textAlign: 'center', padding: '3rem 2.5rem' }}>
               <p className="text-white text-lg font-semibold" style={{ marginBottom: '1rem' }}>Running backtest...</p>
               <p className="text-sm" style={{ color: '#9ca3af', marginBottom: '1.25rem' }}>
-                Simulating {ticker} from {startDate} to {endDate}
+                Simulating {ticker} from {fmtShortDate(startDate)} to {fmtShortDate(endDate)}
               </p>
-              <div style={{ height: '6px', borderRadius: '3px', backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: '0.75rem' }}>
+              <div style={{ height: '6px', borderRadius: '3px', backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: '0.75rem', position: 'relative' }}>
                 <div style={{
-                  height: '100%', borderRadius: '3px',
+                  position: 'absolute',
+                  height: '100%',
+                  width: '40%',
+                  borderRadius: '3px',
                   background: 'linear-gradient(90deg, hsl(var(--accent)), #12BAE6)',
-                  width: `${loadingProgress}%`,
-                  transition: 'width 0.15s ease-out',
+                  animation: 'indeterminate 1.4s ease-in-out infinite',
                 }} />
               </div>
               <p className="text-xs" style={{ color: '#6b7280' }}>
-                {loadingProgress < 100 ? `${Math.round(loadingProgress)}% complete — est. ${Math.max(1, Math.round(3 - (loadingProgress / 100) * 3))}s remaining` : 'Finalizing...'}
+                {loadingElapsed < 1
+                  ? 'Starting...'
+                  : `Elapsed ${loadingElapsed < 60 ? `${Math.floor(loadingElapsed)}s` : `${Math.floor(loadingElapsed / 60)}m ${Math.floor(loadingElapsed % 60)}s`}`}
+                {dataSource === 'thetadata' && loadingElapsed > 5 && (
+                  <span style={{ display: 'block', marginTop: '4px', color: '#6b7280' }}>
+                    First run for a new ticker/range fetches and caches all option chains — can take a few minutes.
+                  </span>
+                )}
               </p>
+              <button
+                onClick={handleStop}
+                style={{
+                  marginTop: '1.5rem',
+                  padding: '8px 20px',
+                  borderRadius: '6px',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  backgroundColor: 'rgba(248,113,113,0.1)',
+                  color: '#f87171',
+                  border: '1px solid rgba(248,113,113,0.3)',
+                  cursor: 'pointer',
+                }}
+              >
+                Stop backtest
+              </button>
             </div>
           </div>
         )}
@@ -824,7 +865,7 @@ function App() {
                   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '20px', height: '20px', borderRadius: '50%', fontSize: '10px', fontWeight: 700, backgroundColor: hasSelectedStrategy ? 'hsl(var(--accent))' : 'rgba(255,255,255,0.06)', color: hasSelectedStrategy ? 'hsl(var(--primary-foreground))' : '#6b7280' }}>3</span>
                   Entry & Exit Rules
                 </h3>
-                <StrategyPanel strategy={strategy} onChange={handleSetStrategy} exitEnabled={exitEnabled} onExitToggle={handleSetExitEnabled} underlyingPrice={syntheticConfig.start_price} />
+                <StrategyPanel strategy={strategy} onChange={handleSetStrategy} underlyingPrice={syntheticConfig.start_price} />
               </div>
             )}
 

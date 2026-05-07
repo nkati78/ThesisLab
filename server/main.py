@@ -40,6 +40,15 @@ app.add_middleware(
 
 def _build_strategy(cfg):
     t = cfg.type
+    exit_kw = {
+        "close_at_profit_pct": cfg.close_at_profit_pct,
+        "close_at_loss_pct": cfg.close_at_loss_pct,
+        "close_at_dte": cfg.close_at_dte,
+        "close_at_profit_enabled": cfg.close_at_profit_enabled,
+        "close_at_loss_enabled": cfg.close_at_loss_enabled,
+        "close_at_dte_enabled": cfg.close_at_dte_enabled,
+        "close_on_short_breach": cfg.close_on_short_breach,
+    }
 
     # ── Single-leg strategies ──
     _leg_map = {
@@ -54,9 +63,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     # ── Credit vertical spreads ──
@@ -66,9 +73,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta, spread_width=cfg.spread_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
     elif t == "short_call_spread":
         return VerticalSpread(
@@ -76,9 +81,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta, spread_width=cfg.spread_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     # ── Debit vertical spreads ──
@@ -88,9 +91,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta, spread_width=cfg.spread_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
     elif t == "debit_put_spread":
         return DebitSpread(
@@ -98,9 +99,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta, spread_width=cfg.spread_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     # ── Calendar spreads ──
@@ -108,17 +107,13 @@ def _build_strategy(cfg):
         return CalendarSpread(
             name="CalendarCallSpread", calendar_type=CalendarType.CALL,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
     elif t == "calendar_put_spread":
         return CalendarSpread(
             name="CalendarPutSpread", calendar_type=CalendarType.PUT,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     # ── Iron condor ──
@@ -126,25 +121,19 @@ def _build_strategy(cfg):
         return IronCondor(
             short_delta=cfg.short_delta, wing_width=cfg.wing_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     # ── Straddles ──
     elif t == "straddle":
         return Straddle(
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
     elif t == "short_straddle":
         return ShortStraddle(
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     # ── Strangles ──
@@ -153,18 +142,14 @@ def _build_strategy(cfg):
             name="LongStrangle", is_short=False,
             short_delta=cfg.short_delta,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
     elif t == "short_strangle":
         return Strangle(
             name="ShortStrangle", is_short=True,
             short_delta=cfg.short_delta,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     # ── Butterflies ──
@@ -173,41 +158,33 @@ def _build_strategy(cfg):
             name="IronButterfly", butterfly_type=ButterflyType.IRON,
             wing_width=cfg.wing_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
     elif t == "long_call_butterfly":
         return Butterfly(
             name="LongCallButterfly", butterfly_type=ButterflyType.LONG_CALL,
             wing_width=cfg.wing_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
     elif t == "long_put_butterfly":
         return Butterfly(
             name="LongPutButterfly", butterfly_type=ButterflyType.LONG_PUT,
             wing_width=cfg.wing_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     # ── Legacy strategies ──
     elif t == "covered_call":
         return CoveredCall(
             delta_target=cfg.short_delta, min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct, close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
     elif t == "protective_put":
         return ProtectivePut(
             delta_target=cfg.put_delta, min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            close_at_profit_pct=cfg.close_at_profit_pct,
-            close_at_loss_pct=cfg.close_at_loss_pct,
-            close_at_dte=cfg.close_at_dte,
+            **exit_kw,
         )
 
     raise ValueError(f"Unknown strategy: {t}")
@@ -218,7 +195,17 @@ def _parse_time(s: str) -> time:
     return time(int(parts[0]), int(parts[1]))
 
 
-def _build_filters(adv) -> EntryExitFilters:
+_DOW_MAP = {
+    "any": (0, 1, 2, 3, 4),
+    "monday": (0,),
+    "tuesday": (1,),
+    "wednesday": (2,),
+    "thursday": (3,),
+    "friday": (4,),
+}
+
+
+def _build_filters(adv, entry_dow: str = "any") -> EntryExitFilters:
     time_f = TimeOfDayFilter()
     entry_ind = IndicatorFilter()
 
@@ -265,10 +252,13 @@ def _build_filters(adv) -> EntryExitFilters:
     if adv.vwap.enabled:
         entry_ind.price_above_vwap = (adv.vwap.direction == "above")
 
+    from thesislab.filters import WeekdayFilter
+    weekday_f = WeekdayFilter(entry_days=_DOW_MAP.get(entry_dow, _DOW_MAP["any"]))
     return EntryExitFilters(
         time_filter=time_f,
         entry_indicator_filter=entry_ind,
         exit_indicator_filter=IndicatorFilter(),
+        weekday_filter=weekday_f,
     )
 
 
@@ -285,6 +275,10 @@ def run_backtest(req: BacktestRequest):
             provider = ThetaDataProvider(
                 ticker=req.ticker.upper(),
                 start_date=start, end_date=end,
+                # Pass the strategy's DTE window so we only pull each
+                # expiration's history during the days it could actually
+                # be entered — keeps SPX year-long backtests tractable.
+                dte_window=(req.strategy.min_dte, req.strategy.max_dte),
             )
         except RuntimeError as e:
             from fastapi import HTTPException
@@ -299,7 +293,7 @@ def run_backtest(req: BacktestRequest):
         )
 
     strategy = _build_strategy(req.strategy)
-    filters = _build_filters(req.advanced_filters)
+    filters = _build_filters(req.advanced_filters, entry_dow=req.strategy.entry_dow)
     config = BacktestConfig(
         ticker=req.ticker.upper(),
         start_date=start, end_date=end,
@@ -364,18 +358,40 @@ def run_backtest(req: BacktestRequest):
 
     pf = result.profit_factor
 
-    # Generate mock S&P 500 benchmark (scaled to starting cash)
-    # ~10% annual return with realistic daily volatility (~16% annualized)
+    # S&P 500 benchmark — real SPX prices when using ThetaData (cache-backed,
+    # so it keeps working offline once cached). Falls back to a synthetic
+    # 10%-annual-drift series for synthetic-data backtests.
     sorted_dates = sorted(result.equity_curve.keys())
-    sp500_rng = random.Random(12345)  # fixed seed for reproducibility
-    daily_drift = math.log(1.10) / 252  # ~10% annual
-    daily_vol = 0.16 / math.sqrt(252)
-    sp500_value = req.starting_cash
-    sp500_benchmark = []
-    for d in sorted_dates:
-        sp500_benchmark.append({"date": d.isoformat(), "value": round(sp500_value, 2)})
-        z = sp500_rng.gauss(0, 1)
-        sp500_value *= math.exp(daily_drift - 0.5 * daily_vol**2 + daily_vol * z)
+    sp500_benchmark: list[dict] = []
+    if req.data_source == "thetadata" and sorted_dates:
+        # S&P 500 benchmark — try SPX (cached as a side-effect of any SPX
+        # option backtest), then SPY (Standard tier blocks older history),
+        # then synthetic fallback.
+        from thesislab.data.thetadata_provider import fetch_stock_eod_series
+        sp_series = fetch_stock_eod_series("SPX", sorted_dates[0], sorted_dates[-1])
+        if not sp_series or len(sp_series) < len(sorted_dates) // 2:
+            sp_series = fetch_stock_eod_series("SPY", sorted_dates[0], sorted_dates[-1])
+        if sp_series:
+            sp_by_date = dict(sp_series)
+            first_close = sp_series[0][1]
+            last_known = first_close
+            for d in sorted_dates:
+                close = sp_by_date.get(d, last_known)
+                last_known = close
+                sp500_benchmark.append({
+                    "date": d.isoformat(),
+                    "value": round(req.starting_cash * (close / first_close), 2),
+                })
+    if not sp500_benchmark:
+        # Synthetic fallback (also covers data_source == "synthetic")
+        sp500_rng = random.Random(12345)
+        daily_drift = math.log(1.10) / 252
+        daily_vol = 0.16 / math.sqrt(252)
+        sp500_value = req.starting_cash
+        for d in sorted_dates:
+            sp500_benchmark.append({"date": d.isoformat(), "value": round(sp500_value, 2)})
+            z = sp500_rng.gauss(0, 1)
+            sp500_value *= math.exp(daily_drift - 0.5 * daily_vol**2 + daily_vol * z)
 
     # Generate buy-and-hold benchmark for the underlying
     # If you invested starting_cash into the underlying at the first price and held

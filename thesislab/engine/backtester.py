@@ -76,7 +76,7 @@ class Backtester:
                     )
 
             # Phase 2: Check entries (only if filters allow)
-            if self.filters.can_enter(indicators):
+            if self.filters.can_enter(indicators, current_date=current_date):
                 for strategy in self.strategies:
                     new_trades = strategy.scan(chain, self.portfolio.open_positions)
                     for trade in new_trades:

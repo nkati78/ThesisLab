@@ -5,8 +5,6 @@ import { InfoTip } from './InfoTip';
 interface Props {
   strategy: StrategyConfig;
   onChange: (s: StrategyConfig) => void;
-  exitEnabled: boolean;
-  onExitToggle: (v: boolean) => void;
   underlyingPrice: number;
 }
 
@@ -216,7 +214,7 @@ function Slider({ label, value, min, max, step, help, tip, onChange, format, sna
   );
 }
 
-export function StrategyPanel({ strategy, onChange, exitEnabled, onExitToggle, underlyingPrice }: Props) {
+export function StrategyPanel({ strategy, onChange, underlyingPrice }: Props) {
   const set = (patch: Partial<StrategyConfig>) => onChange({ ...strategy, ...patch });
   const type = strategy.type;
   const w = widthSnaps(underlyingPrice);
@@ -245,6 +243,25 @@ export function StrategyPanel({ strategy, onChange, exitEnabled, onExitToggle, u
           {strategy.min_dte > strategy.max_dte && (
             <p className="text-yellow-400 text-xs">Min DTE should be less than Max DTE</p>
           )}
+          <div style={{ marginTop: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '6px' }}>
+              <label style={{ fontSize: '13px', color: '#d1d5db' }}>Entry Day</label>
+              <InfoTip text="Restrict entries to a specific day of the week. 'Daily' opens whenever conditions allow." />
+            </div>
+            <select
+              className="input-field"
+              value={strategy.entry_dow}
+              onChange={(e) => set({ entry_dow: e.target.value })}
+              style={{ width: '100%', padding: '8px 10px', fontSize: '13px' }}
+            >
+              <option value="any">Daily</option>
+              <option value="monday">Monday only</option>
+              <option value="tuesday">Tuesday only</option>
+              <option value="wednesday">Wednesday only</option>
+              <option value="thursday">Thursday only</option>
+              <option value="friday">Friday only</option>
+            </select>
+          </div>
         </div>
 
         {/* Delta & Spread */}
@@ -295,46 +312,87 @@ export function StrategyPanel({ strategy, onChange, exitEnabled, onExitToggle, u
           )}
         </div>
 
-        {/* Exit Criteria */}
-        <div className="card" style={{ borderColor: exitEnabled ? 'hsl(var(--accent) / 0.3)' : undefined, backgroundColor: exitEnabled ? 'hsl(var(--accent) / 0.03)' : undefined }}>
-          <label className="flex items-center gap-2 cursor-pointer" style={{ marginBottom: '0.75rem' }}>
-            <input type="checkbox" checked={exitEnabled} onChange={(e) => onExitToggle(e.target.checked)}
-              className="w-3.5 h-3.5 rounded accent-blue-500" />
-            <span className="card-title" style={{ marginBottom: 0, color: exitEnabled ? 'white' : '#9ca3af' }}>Exit Criteria</span>
-            <InfoTip text="Rules that trigger closing an open position before expiration. Disable to hold positions until expiration." />
-          </label>
-          <div style={{ opacity: exitEnabled ? 1 : 0.4, pointerEvents: exitEnabled ? 'auto' : 'none' }}>
-            <Slider label="Take Profit" value={strategy.close_at_profit_pct}
-              min={0.1} max={2.0} step={0.05}
-              snaps={[0.25, 0.50, 0.75, 1.0]}
-              format={(v) => `${(v * 100).toFixed(0)}%`}
-              snapLabels={(v) => `${(v * 100).toFixed(0)}%`}
-              tip="Close the position when this percentage of max profit is reached. E.g. 50% means close when half the credit is captured."
-              onChange={(v) => set({ close_at_profit_pct: v })} />
-            {!isDebitStraddle && !isProtPut && (
-              <Slider label="Stop Loss (x credit)" value={strategy.close_at_loss_pct}
-                min={0.5} max={5.0} step={0.25}
-                snaps={[1.0, 1.5, 2.0, 3.0, 4.0]}
-                format={(v) => `${v.toFixed(2)}x`}
-                snapLabels={(v) => `${v}x`}
-                tip="Close the position when the cost to close exceeds this multiple of the initial credit received."
-                onChange={(v) => set({ close_at_loss_pct: v })} />
-            )}
-            {(isDebitStraddle || isProtPut) && (
-              <Slider label="Stop Loss" value={strategy.close_at_loss_pct}
-                min={0.1} max={1.0} step={0.05}
+        {/* Exit Criteria — per-criterion opt-in */}
+        <div className="card">
+          <h3 className="card-title">Exit Criteria<InfoTip text="Optional rules that close a position before expiration. Enable any combination — none enabled means hold to expiration." /></h3>
+
+          {/* Take Profit */}
+          <div style={{ marginBottom: '0.5rem' }}>
+            <label className="flex items-center gap-2 cursor-pointer" style={{ marginBottom: '4px' }}>
+              <input type="checkbox" checked={strategy.close_at_profit_enabled}
+                onChange={(e) => set({ close_at_profit_enabled: e.target.checked })}
+                className="w-3.5 h-3.5 rounded accent-blue-500" />
+              <span style={{ fontSize: '13px', color: strategy.close_at_profit_enabled ? 'white' : '#9ca3af' }}>Take Profit</span>
+            </label>
+            <div style={{ opacity: strategy.close_at_profit_enabled ? 1 : 0.4, pointerEvents: strategy.close_at_profit_enabled ? 'auto' : 'none' }}>
+              <Slider label="" value={strategy.close_at_profit_pct}
+                min={0.1} max={2.0} step={0.05}
                 snaps={[0.25, 0.50, 0.75, 1.0]}
                 format={(v) => `${(v * 100).toFixed(0)}%`}
                 snapLabels={(v) => `${(v * 100).toFixed(0)}%`}
-                tip="Close the position when the loss reaches this percentage of the initial debit paid."
-                onChange={(v) => set({ close_at_loss_pct: v })} />
-            )}
-            <Slider label="Close at DTE" value={strategy.close_at_dte}
-              min={0} max={30} step={1}
-              snaps={[0, 3, 7, 14, 21]}
-              snapLabels={(v) => `${v}d`}
-              tip="Automatically close the position when this many days remain until expiration, regardless of P&L."
-              onChange={(v) => set({ close_at_dte: v })} />
+                tip="Close when this percentage of max profit is reached."
+                onChange={(v) => set({ close_at_profit_pct: v })} />
+            </div>
+          </div>
+
+          {/* Stop Loss */}
+          <div style={{ marginBottom: '0.5rem' }}>
+            <label className="flex items-center gap-2 cursor-pointer" style={{ marginBottom: '4px' }}>
+              <input type="checkbox" checked={strategy.close_at_loss_enabled}
+                onChange={(e) => set({ close_at_loss_enabled: e.target.checked })}
+                className="w-3.5 h-3.5 rounded accent-blue-500" />
+              <span style={{ fontSize: '13px', color: strategy.close_at_loss_enabled ? 'white' : '#9ca3af' }}>
+                Stop Loss{!isDebitStraddle && !isProtPut ? ' (x credit)' : ''}
+              </span>
+            </label>
+            <div style={{ opacity: strategy.close_at_loss_enabled ? 1 : 0.4, pointerEvents: strategy.close_at_loss_enabled ? 'auto' : 'none' }}>
+              {!isDebitStraddle && !isProtPut ? (
+                <Slider label="" value={strategy.close_at_loss_pct}
+                  min={0.5} max={5.0} step={0.25}
+                  snaps={[1.0, 1.5, 2.0, 3.0, 4.0]}
+                  format={(v) => `${v.toFixed(2)}x`}
+                  snapLabels={(v) => `${v}x`}
+                  tip="Close when cost to close exceeds this multiple of the entry credit."
+                  onChange={(v) => set({ close_at_loss_pct: v })} />
+              ) : (
+                <Slider label="" value={strategy.close_at_loss_pct}
+                  min={0.1} max={1.0} step={0.05}
+                  snaps={[0.25, 0.50, 0.75, 1.0]}
+                  format={(v) => `${(v * 100).toFixed(0)}%`}
+                  snapLabels={(v) => `${(v * 100).toFixed(0)}%`}
+                  tip="Close when loss reaches this percentage of the entry debit."
+                  onChange={(v) => set({ close_at_loss_pct: v })} />
+              )}
+            </div>
+          </div>
+
+          {/* Close at DTE */}
+          <div style={{ marginBottom: '0.5rem' }}>
+            <label className="flex items-center gap-2 cursor-pointer" style={{ marginBottom: '4px' }}>
+              <input type="checkbox" checked={strategy.close_at_dte_enabled}
+                onChange={(e) => set({ close_at_dte_enabled: e.target.checked })}
+                className="w-3.5 h-3.5 rounded accent-blue-500" />
+              <span style={{ fontSize: '13px', color: strategy.close_at_dte_enabled ? 'white' : '#9ca3af' }}>Close at DTE</span>
+            </label>
+            <div style={{ opacity: strategy.close_at_dte_enabled ? 1 : 0.4, pointerEvents: strategy.close_at_dte_enabled ? 'auto' : 'none' }}>
+              <Slider label="" value={strategy.close_at_dte}
+                min={0} max={30} step={1}
+                snaps={[0, 3, 7, 14, 21]}
+                snapLabels={(v) => `${v}d`}
+                tip="Close when this many days remain until expiration, regardless of P&L."
+                onChange={(v) => set({ close_at_dte: v })} />
+            </div>
+          </div>
+
+          {/* Short Strike Breach */}
+          <div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={strategy.close_on_short_breach}
+                onChange={(e) => set({ close_on_short_breach: e.target.checked })}
+                className="w-3.5 h-3.5 rounded accent-blue-500" />
+              <span style={{ fontSize: '13px', color: strategy.close_on_short_breach ? 'white' : '#9ca3af' }}>Short Strike Breach</span>
+              <InfoTip text="Close as soon as the underlying crosses any short strike (price falls below a short put or rises above a short call). No effect on long-only strategies." />
+            </label>
           </div>
         </div>
       </div>

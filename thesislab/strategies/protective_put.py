@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from thesislab.domain import CloseSignal, ExitReason, Leg, OptionType, OptionsChain, Position, Trade
-from thesislab.strategies.utils import find_current_contract, intrinsic_value
+from thesislab.strategies.utils import find_current_contract, intrinsic_value, check_non_pnl_exits
 
 
 @dataclass
@@ -22,6 +22,10 @@ class ProtectivePut:
     close_at_profit_pct: float = 1.00  # close at 100% profit (put doubled)
     close_at_dte: int = 7
     close_at_loss_pct: float = 0.50  # cut loss at 50%
+    close_at_profit_enabled: bool = False
+    close_at_loss_enabled: bool = False
+    close_at_dte_enabled: bool = False
+    close_on_short_breach: bool = False
 
     def scan(self, chain: OptionsChain, current_positions: list[Position]) -> list[Trade]:
         active = [p for p in current_positions if p.strategy_name == self.name]
@@ -48,33 +52,35 @@ class ProtectivePut:
     def should_close(self, position: Position, chain: OptionsChain) -> CloseSignal | None:
         entry_leg = position.entry_trade.legs[0]
         contract = entry_leg.contract
-        dte = contract.dte(chain.quote_date)
-
         current = find_current_contract(contract, chain)
 
-        if dte <= 0:
+        non_pnl = check_non_pnl_exits(
+            position, chain,
+            close_at_dte_enabled=self.close_at_dte_enabled, close_at_dte=self.close_at_dte,
+            close_on_short_breach=self.close_on_short_breach,
+        )
+        if non_pnl == ExitReason.EXPIRATION:
             close_price = intrinsic_value(contract, chain.underlying_price) if current is None else current.mid
             return CloseSignal(self._closing_trade(entry_leg, chain, close_price), ExitReason.EXPIRATION)
+        if non_pnl is not None and current is not None:
+            return CloseSignal(self._closing_trade(entry_leg, chain, current.mid), non_pnl)
 
         if current is None:
             return None
 
-        if dte <= self.close_at_dte:
-            return CloseSignal(self._closing_trade(entry_leg, chain, current.mid), ExitReason.DTE_LIMIT)
+        if not (self.close_at_profit_enabled or self.close_at_loss_enabled):
+            return None
 
         entry_cost = abs(position.entry_trade.net_premium)
         current_value = current.mid * 100
 
-        # Profit target
         if entry_cost > 0:
             profit_pct = (current_value - entry_cost) / entry_cost
-            if profit_pct >= self.close_at_profit_pct:
+            if self.close_at_profit_enabled and profit_pct >= self.close_at_profit_pct:
                 return CloseSignal(self._closing_trade(entry_leg, chain, current.mid), ExitReason.PROFIT_TARGET)
 
-        # Stop loss
-        if entry_cost > 0:
             loss_pct = (entry_cost - current_value) / entry_cost
-            if loss_pct >= self.close_at_loss_pct:
+            if self.close_at_loss_enabled and loss_pct >= self.close_at_loss_pct:
                 return CloseSignal(self._closing_trade(entry_leg, chain, current.mid), ExitReason.STOP_LOSS)
 
         return None

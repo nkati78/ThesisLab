@@ -61,6 +61,13 @@ class StrategyConfig(BaseModel):
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 2.0
     close_at_dte: int = 7
+    # Per-criterion enable flags — defaults OFF so positions hold to expiration
+    # unless the user explicitly opts into one or more exit rules.
+    close_at_profit_enabled: bool = False
+    close_at_loss_enabled: bool = False
+    close_at_dte_enabled: bool = False
+    close_on_short_breach: bool = False
+    entry_dow: str = "any"  # "any", "monday", "tuesday", "wednesday", "thursday", "friday"
     # Protective put specific
     put_delta: float = -0.20
     # Iron condor specific
@@ -79,7 +86,7 @@ class BacktestRequest(BaseModel):
     start_date: str = "2023-01-03"
     end_date: str = "2024-01-03"
     starting_cash: float = 100_000.0
-    commission: float = 0.65
+    commission: float = 0
     strategy: StrategyConfig
     advanced_filters: AdvancedFilters = AdvancedFilters()
     data_source: str = "synthetic"  # "synthetic" or "csv"

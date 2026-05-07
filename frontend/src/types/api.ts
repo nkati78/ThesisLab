@@ -54,6 +54,11 @@ export interface StrategyConfig {
   close_at_profit_pct: number;
   close_at_loss_pct: number;
   close_at_dte: number;
+  close_at_profit_enabled: boolean;
+  close_at_loss_enabled: boolean;
+  close_at_dte_enabled: boolean;
+  close_on_short_breach: boolean;
+  entry_dow: string;
   put_delta: number;
   wing_width: number;
 }
@@ -143,6 +148,11 @@ export const DEFAULT_STRATEGY: StrategyConfig = {
   close_at_profit_pct: 0.5,
   close_at_loss_pct: 2.0,
   close_at_dte: 7,
+  close_at_profit_enabled: false,
+  close_at_loss_enabled: false,
+  close_at_dte_enabled: false,
+  close_on_short_breach: false,
+  entry_dow: "any",
   put_delta: -0.2,
   wing_width: 5,
 };

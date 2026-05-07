@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from thesislab.domain import CloseSignal, ExitReason, Leg, OptionType, OptionsChain, Position, Trade
-from thesislab.strategies.utils import find_current_contract, intrinsic_value
+from thesislab.strategies.utils import find_current_contract, intrinsic_value, check_non_pnl_exits
 
 
 class CalendarType(Enum):
@@ -29,6 +29,10 @@ class CalendarSpread:
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 1.00
     close_at_dte: int = 5  # close when front month is near expiry
+    close_at_profit_enabled: bool = False
+    close_at_loss_enabled: bool = False
+    close_at_dte_enabled: bool = False
+    close_on_short_breach: bool = False
 
     def scan(self, chain: OptionsChain, current_positions: list[Position]) -> list[Trade]:
         active = [p for p in current_positions if p.strategy_name == self.name]
@@ -80,14 +84,16 @@ class CalendarSpread:
         return [Trade(legs=legs, trade_date=chain.quote_date, net_premium=-net_debit)]
 
     def should_close(self, position: Position, chain: OptionsChain) -> CloseSignal | None:
-        legs = position.entry_trade.legs
-        front_dte = min(leg.contract.dte(chain.quote_date) for leg in legs)
+        non_pnl = check_non_pnl_exits(
+            position, chain,
+            close_at_dte_enabled=self.close_at_dte_enabled, close_at_dte=self.close_at_dte,
+            close_on_short_breach=self.close_on_short_breach,
+        )
+        if non_pnl is not None:
+            return CloseSignal(self._close_position(position, chain), non_pnl)
 
-        if front_dte <= 0:
-            return CloseSignal(self._close_position(position, chain), ExitReason.EXPIRATION)
-
-        if front_dte <= self.close_at_dte:
-            return CloseSignal(self._close_position(position, chain), ExitReason.DTE_LIMIT)
+        if not (self.close_at_profit_enabled or self.close_at_loss_enabled):
+            return None
 
         current_value = self._current_value(position, chain)
         if current_value is None:
@@ -99,10 +105,10 @@ class CalendarSpread:
 
         pnl_pct = (current_value - entry_cost) / entry_cost
 
-        if pnl_pct >= self.close_at_profit_pct:
+        if self.close_at_profit_enabled and pnl_pct >= self.close_at_profit_pct:
             return CloseSignal(self._close_position(position, chain), ExitReason.PROFIT_TARGET)
 
-        if pnl_pct <= -self.close_at_loss_pct:
+        if self.close_at_loss_enabled and pnl_pct <= -self.close_at_loss_pct:
             return CloseSignal(self._close_position(position, chain), ExitReason.STOP_LOSS)
 
         return None

@@ -7,7 +7,7 @@ whether trading is allowed on a given bar.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import time
+from datetime import date, time
 
 from thesislab.indicators import IndicatorValues
 
@@ -133,15 +133,41 @@ class IndicatorFilter:
 
 
 @dataclass
+class WeekdayFilter:
+    """Restrict entries to specific days of the week.
+
+    entry_days uses Python's weekday convention: 0=Monday ... 4=Friday.
+    Default = all weekdays (no restriction).
+    """
+
+    entry_days: tuple[int, ...] = (0, 1, 2, 3, 4)
+
+    def can_enter(self, current_date: date | None) -> bool:
+        if current_date is None:
+            return True
+        return current_date.weekday() in self.entry_days
+
+
+@dataclass
 class EntryExitFilters:
     """Combined filters for controlling when trades can be opened or closed."""
 
     time_filter: TimeOfDayFilter = field(default_factory=TimeOfDayFilter)
     entry_indicator_filter: IndicatorFilter = field(default_factory=IndicatorFilter)
     exit_indicator_filter: IndicatorFilter = field(default_factory=IndicatorFilter)
+    weekday_filter: WeekdayFilter = field(default_factory=WeekdayFilter)
 
-    def can_enter(self, ind: IndicatorValues | None = None, current_time: time | None = None) -> bool:
-        return self.time_filter.can_enter(current_time) and self.entry_indicator_filter.check(ind)
+    def can_enter(
+        self,
+        ind: IndicatorValues | None = None,
+        current_time: time | None = None,
+        current_date: date | None = None,
+    ) -> bool:
+        return (
+            self.time_filter.can_enter(current_time)
+            and self.weekday_filter.can_enter(current_date)
+            and self.entry_indicator_filter.check(ind)
+        )
 
     def can_exit(self, ind: IndicatorValues | None = None, current_time: time | None = None) -> bool:
         return self.time_filter.can_exit(current_time) and self.exit_indicator_filter.check(ind)

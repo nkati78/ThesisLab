@@ -23,6 +23,80 @@ from thesislab.domain import OptionContract, OptionType, OptionsChain
 _DEFAULT_CREDS = Path("C:/Program Files/ThetaTerminal/creds.txt")
 
 
+def fetch_stock_eod_series(
+    symbol: str, start_date: date, end_date: date,
+) -> list[tuple[date, float]]:
+    """Return [(date, close), ...] for the symbol over the range.
+
+    Cache-first: serves from local SQLite when present, else fetches via the
+    Python library and writes through. After the first fetch, subsequent calls
+    work offline — including after the user's subscription expires.
+    """
+    # Try cache first — only hit the API if any expected day is missing.
+    cached: dict[date, float] = {}
+    cur = start_date
+    while cur <= end_date:
+        c = cache.fetch_stock_close(symbol, cur)
+        if c is not None:
+            cached[cur] = c
+        cur += timedelta(days=1)
+
+    # Heuristic: if cache covers both endpoints (within a few days), trust it.
+    # Otherwise fetch the missing range from ThetaData.
+    cached_dates = sorted(cached.keys())
+    needs_fetch = (
+        not cached_dates
+        or cached_dates[0] > start_date + timedelta(days=4)
+        or cached_dates[-1] < end_date - timedelta(days=4)
+    )
+    if needs_fetch:
+        creds = _read_creds()
+        if creds:
+            try:
+                from thetadata import ThetaClient
+                client = ThetaClient(
+                    email=creds[0], password=creds[1], dataframe_type="pandas",
+                )
+                df = client.stock_history_eod(
+                    symbol=symbol, start_date=start_date, end_date=end_date,
+                )
+                if df is not None and len(df) > 0:
+                    rows = []
+                    for _, r in df.iterrows():
+                        qd = _to_date(r.get("created") or r.get("date") or r.get("quote_date"))
+                        if qd is None:
+                            continue
+                        close = _f(r.get("close"))
+                        rows.append({
+                            "symbol": symbol,
+                            "quote_date": qd.isoformat(),
+                            "open": _f(r.get("open")), "high": _f(r.get("high")),
+                            "low": _f(r.get("low")), "close": close,
+                            "volume": _i(r.get("volume")),
+                        })
+                        if close is not None:
+                            cached[qd] = close
+                    cache.store_stock_eod(rows)
+            except Exception:
+                # Fall back to whatever we had cached — caller decides what to do
+                # if the series is empty.
+                pass
+
+    return sorted(cached.items())
+
+
+def _root_for(ticker: str, expiration: date) -> str:
+    """For SPX-family options, monthly 3rd-Friday expirations live under
+    root SPX, weeklies/dailies under SPXW. For other tickers we just use
+    the ticker as-is."""
+    if ticker == "SPX":
+        # 3rd Friday of the month: weekday 4 (Fri), and 15 <= day <= 21
+        if expiration.weekday() == 4 and 15 <= expiration.day <= 21:
+            return "SPX"
+        return "SPXW"
+    return ticker
+
+
 def _read_creds() -> tuple[str, str] | None:
     user = os.environ.get("THETADATA_USERNAME")
     pw = os.environ.get("THETADATA_PASSWORD")
@@ -48,6 +122,8 @@ class ThetaDataProvider:
         strike_pct: float = 0.30,
         max_dte: int = 90,
         max_workers: int = 4,
+        dte_window: tuple[int, int] = (0, 60),
+        close_buffer_days: int = 14,
     ):
         self.ticker = ticker.upper()
         self.start_date = start_date
@@ -55,6 +131,14 @@ class ThetaDataProvider:
         self.strike_pct = strike_pct
         self.max_dte = max_dte
         self.max_workers = max_workers
+        # Strategy DTE window — used to clamp how much of each expiration's
+        # history we pull. For a 4-DTE strategy each expiration only needs
+        # ~4 trading days, not the full backtest range.
+        self.dte_window = dte_window
+        # Extra days past max_dte to cover open positions through close_at_dte
+        # / expiration. A position opened at max_dte and held to expiration
+        # needs `max_dte` days of history; we add a small cushion.
+        self.close_buffer_days = close_buffer_days
         self._chain_by_date: dict[date, OptionsChain] = {}
 
         creds = _read_creds()
@@ -102,9 +186,14 @@ class ThetaDataProvider:
         if cache.fetch_stock_close(self.ticker, self.start_date) is not None and \
            cache.fetch_stock_close(self.ticker, self.end_date) is not None:
             return
-        df = self._client.stock_history_eod(
-            symbol=self.ticker, start_date=self.start_date, end_date=self.end_date,
-        )
+        try:
+            df = self._client.stock_history_eod(
+                symbol=self.ticker, start_date=self.start_date, end_date=self.end_date,
+            )
+        except Exception:
+            # SPX and other indices have no stock EOD endpoint — that's fine.
+            # _fetch_chain_universe will derive underlying prices from option rows.
+            return
         if df is None or len(df) == 0:
             return
         rows = []
@@ -124,7 +213,9 @@ class ThetaDataProvider:
     def _fetch_chain_universe(self) -> None:
         """Pull EOD greeks for every expiration within scope, all strikes both
         rights in one call per expiration."""
-        # Underlying range — used to filter strikes after the pull
+        # Underlying range — used to filter strikes after the pull. For indices
+        # (SPX) stock EOD is unavailable; fall back to sampling the option
+        # chain's underlying_price field.
         prices = []
         cur = self.start_date
         while cur <= self.end_date:
@@ -132,24 +223,43 @@ class ThetaDataProvider:
             if p is not None:
                 prices.append(p)
             cur += timedelta(days=1)
+
         if not prices:
-            raise RuntimeError(
-                f"No stock EOD data cached for {self.ticker} in range — "
-                "ThetaData may not cover this symbol/range on your tier."
-            )
+            sample = self._sample_underlying_from_options()
+            if sample is None:
+                raise RuntimeError(
+                    f"Could not determine underlying price for {self.ticker} — "
+                    "neither stock EOD nor option data was retrievable. "
+                    "ThetaData may not cover this symbol/range on your tier."
+                )
+            # Wide bound for indices since we only have one sample point
+            prices = [sample]
+            self.strike_pct = max(self.strike_pct, 0.40)
+
         lo_strike = min(prices) * (1 - self.strike_pct)
         hi_strike = max(prices) * (1 + self.strike_pct)
 
-        # Expirations: anything expiring up to max_dte days past end_date
+        # Expirations: anything expiring up to max_dte days past end_date.
+        # For SPX, weeklies live under root "SPXW" — query both and combine
+        # so dailies/weeklies are included, not just 3rd-Friday monthlies.
         exp_horizon = self.end_date + timedelta(days=self.max_dte)
-        exp_df = self._client.option_list_expirations(symbol=self.ticker)
-        expirations: list[date] = []
-        for _, r in exp_df.iterrows():
-            d = _to_date(r.get("expiration"))
-            if d and self.start_date <= d <= exp_horizon:
-                expirations.append(d)
+        exp_symbols = [self.ticker]
+        if self.ticker == "SPX":
+            exp_symbols.append("SPXW")
+        exp_set: set[date] = set()
+        for sym in exp_symbols:
+            try:
+                exp_df = self._client.option_list_expirations(symbol=sym)
+            except Exception:
+                continue
+            for _, r in exp_df.iterrows():
+                d = _to_date(r.get("expiration"))
+                if d and self.start_date <= d <= exp_horizon:
+                    exp_set.add(d)
+        expirations = sorted(exp_set)
 
         # One API call per expiration (all strikes, both rights, full date range)
+        synthesized_stock: dict[str, float] = {}  # quote_date -> close (for indices)
         with ThreadPoolExecutor(max_workers=self.max_workers) as ex:
             futures = [
                 ex.submit(self._fetch_expiration, exp, lo_strike, hi_strike)
@@ -159,18 +269,66 @@ class ThetaDataProvider:
                 rows = f.result()
                 if rows:
                     cache.store_option_eod(rows)
+                    # For indices: synthesize stock_eod from underlying_price
+                    for r in rows:
+                        if r.get("underlying_price") and r["quote_date"] not in synthesized_stock:
+                            synthesized_stock[r["quote_date"]] = r["underlying_price"]
+        # Persist synthesized stock prices so future cache hits / benchmark work
+        if synthesized_stock and not cache.fetch_stock_close(self.ticker, self.start_date):
+            cache.store_stock_eod([
+                {"symbol": self.ticker, "quote_date": qd,
+                 "open": None, "high": None, "low": None, "close": close,
+                 "volume": None}
+                for qd, close in synthesized_stock.items()
+            ])
+
+    def _sample_underlying_from_options(self) -> float | None:
+        """For indices like SPX with no stock_history_eod, fetch one near-term
+        expiration's chain at start_date and read the underlying_price field."""
+        sym_for_list = "SPXW" if self.ticker == "SPX" else self.ticker
+        try:
+            exp_df = self._client.option_list_expirations(symbol=sym_for_list)
+        except Exception:
+            return None
+        for _, r in exp_df.iterrows():
+            d = _to_date(r.get("expiration"))
+            if d and d >= self.start_date and d <= self.start_date + timedelta(days=60):
+                root = _root_for(self.ticker, d)
+                try:
+                    df = self._client.option_history_greeks_eod(
+                        symbol=root, expiration=d,
+                        start_date=self.start_date, end_date=self.start_date,
+                    )
+                    if df is not None and len(df) > 0:
+                        up = _f(df.iloc[0].get("underlying_price"))
+                        if up:
+                            return up
+                except Exception:
+                    continue
+        return None
 
     def _fetch_expiration(
         self, expiration: date, lo_strike: float, hi_strike: float,
     ) -> list[dict]:
         """Fetch greeks/eod for ALL strikes (both calls and puts) at this
-        expiration over the backtest date range. Filter strikes locally."""
+        expiration. Date range is clamped to when this expiration is
+        actually in the strategy's DTE window — for a 4-DTE strategy
+        on a Friday expiration we only need 4 trading days, not a full year."""
+        min_dte, max_dte = self.dte_window
+        # An expiration E is in scope for entry on day D when min_dte <= (E - D) <= max_dte,
+        # i.e., D ∈ [E - max_dte - close_buffer, E - min_dte].
+        # Buffer accounts for held positions closing at expiration / close_at_dte.
+        fetch_start = max(self.start_date, expiration - timedelta(days=max_dte + self.close_buffer_days))
+        fetch_end = min(self.end_date, expiration)
+        if fetch_start > fetch_end:
+            return []
+        root = _root_for(self.ticker, expiration)
         try:
             df = self._client.option_history_greeks_eod(
-                symbol=self.ticker,
+                symbol=root,
                 expiration=expiration,
-                start_date=self.start_date,
-                end_date=self.end_date,
+                start_date=fetch_start,
+                end_date=fetch_end,
                 # strike defaults to "*" = all strikes
                 # right defaults to "both" = calls + puts
             )

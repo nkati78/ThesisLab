@@ -295,7 +295,7 @@ function DefaultsTab() {
   const [startDate, setStartDate] = useState(existing?.startDate || '');
   const [endDate, setEndDate] = useState(existing?.endDate || '');
   const [startingCash, setStartingCash] = useState(existing?.startingCash || 100000);
-  const [commission, setCommission] = useState(existing?.commission ?? 0.65);
+  const [commission, setCommission] = useState(existing?.commission ?? 0);
   const [strategy, setStrategy] = useState(existing?.strategy || '');
   const [msg, setMsg] = useState('');
 

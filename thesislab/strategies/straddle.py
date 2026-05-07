@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from thesislab.domain import CloseSignal, ExitReason, Leg, OptionType, OptionsChain, Position, Trade
-from thesislab.strategies.utils import find_current_contract, intrinsic_value
+from thesislab.strategies.utils import find_current_contract, intrinsic_value, check_non_pnl_exits
 
 
 @dataclass
@@ -20,6 +20,10 @@ class Straddle:
     close_at_profit_pct: float = 0.50  # close at 50% profit
     close_at_loss_pct: float = 0.30  # cut loss at 30%
     close_at_dte: int = 7
+    close_at_profit_enabled: bool = False
+    close_at_loss_enabled: bool = False
+    close_at_dte_enabled: bool = False
+    close_on_short_breach: bool = False
 
     def scan(self, chain: OptionsChain, current_positions: list[Position]) -> list[Trade]:
         active = [p for p in current_positions if p.strategy_name == self.name]
@@ -51,14 +55,18 @@ class Straddle:
         return [Trade(legs=legs, trade_date=chain.quote_date, net_premium=-total_debit)]
 
     def should_close(self, position: Position, chain: OptionsChain) -> CloseSignal | None:
-        legs = position.entry_trade.legs
-        dte = min(leg.contract.dte(chain.quote_date) for leg in legs)
-
-        if dte <= 0:
+        non_pnl = check_non_pnl_exits(
+            position, chain,
+            close_at_dte_enabled=self.close_at_dte_enabled, close_at_dte=self.close_at_dte,
+            close_on_short_breach=self.close_on_short_breach,
+        )
+        if non_pnl == ExitReason.EXPIRATION:
             return CloseSignal(self._close_at_intrinsic(position, chain), ExitReason.EXPIRATION)
+        if non_pnl is not None:
+            return CloseSignal(self._close_position(position, chain), non_pnl)
 
-        if dte <= self.close_at_dte:
-            return CloseSignal(self._close_position(position, chain), ExitReason.DTE_LIMIT)
+        if not (self.close_at_profit_enabled or self.close_at_loss_enabled):
+            return None
 
         current_value = self._current_value(position, chain)
         if current_value is None:
@@ -70,10 +78,10 @@ class Straddle:
 
         pnl_pct = (current_value - entry_cost) / entry_cost
 
-        if pnl_pct >= self.close_at_profit_pct:
+        if self.close_at_profit_enabled and pnl_pct >= self.close_at_profit_pct:
             return CloseSignal(self._close_position(position, chain), ExitReason.PROFIT_TARGET)
 
-        if pnl_pct <= -self.close_at_loss_pct:
+        if self.close_at_loss_enabled and pnl_pct <= -self.close_at_loss_pct:
             return CloseSignal(self._close_position(position, chain), ExitReason.STOP_LOSS)
 
         return None

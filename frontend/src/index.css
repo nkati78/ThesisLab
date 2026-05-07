@@ -127,3 +127,9 @@ input[type="checkbox"] {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
+
+/* Indeterminate progress bar animation */
+@keyframes indeterminate {
+  0%   { left: -40%; }
+  100% { left: 100%; }
+}

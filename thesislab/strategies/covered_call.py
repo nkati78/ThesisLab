@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from thesislab.domain import CloseSignal, ExitReason, Leg, OptionType, OptionsChain, Position, Trade
-from thesislab.strategies.utils import find_current_contract, intrinsic_value
+from thesislab.strategies.utils import find_current_contract, intrinsic_value, check_non_pnl_exits
 
 
 @dataclass
@@ -21,6 +21,12 @@ class CoveredCall:
     max_positions: int = 1
     close_at_profit_pct: float = 0.50  # close when 50% of max profit captured
     close_at_dte: int = 7  # close when 7 DTE remaining
+    close_at_profit_enabled: bool = False
+    close_at_dte_enabled: bool = False
+    close_on_short_breach: bool = False
+    # Covered call has no close_at_loss; included for schema parity
+    close_at_loss_pct: float = 0.0
+    close_at_loss_enabled: bool = False
 
     def scan(self, chain: OptionsChain, current_positions: list[Position]) -> list[Trade]:
         active = [p for p in current_positions if p.strategy_name == self.name]
@@ -49,22 +55,20 @@ class CoveredCall:
     def should_close(self, position: Position, chain: OptionsChain) -> CloseSignal | None:
         entry_leg = position.entry_trade.legs[0]
         contract = entry_leg.contract
-
-        # Find current price of the same contract
         current = find_current_contract(contract, chain)
-        dte = contract.dte(chain.quote_date)
 
-        # Close at expiration
-        if dte <= 0:
+        non_pnl = check_non_pnl_exits(
+            position, chain,
+            close_at_dte_enabled=self.close_at_dte_enabled, close_at_dte=self.close_at_dte,
+            close_on_short_breach=self.close_on_short_breach,
+        )
+        if non_pnl == ExitReason.EXPIRATION:
             close_price = intrinsic_value(contract, chain.underlying_price) if current is None else current.mid
             return CloseSignal(self._closing_trade(entry_leg, chain, close_price), ExitReason.EXPIRATION)
+        if non_pnl is not None and current is not None:
+            return CloseSignal(self._closing_trade(entry_leg, chain, current.mid), non_pnl)
 
-        # Close if DTE threshold reached
-        if dte <= self.close_at_dte and current is not None:
-            return CloseSignal(self._closing_trade(entry_leg, chain, current.mid), ExitReason.DTE_LIMIT)
-
-        # Close if profit target reached
-        if current is not None:
+        if self.close_at_profit_enabled and current is not None:
             entry_credit = position.entry_trade.net_premium
             cost_to_close = current.mid * 100
             profit_captured = entry_credit - cost_to_close
