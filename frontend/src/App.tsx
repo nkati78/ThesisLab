@@ -335,9 +335,17 @@ function App() {
   const [syntheticConfig] = useState<SyntheticDataConfig>({
     start_price: 450, daily_drift: 0.0003, base_iv: 0.25, seed: 42,
   });
+  // Default end date depends on the data source: synthetic uses today,
+  // ThetaData uses yesterday since EOD data lags by a day.
+  const defaultEndDate = (src: 'synthetic' | 'thetadata') => {
+    const d = new Date();
+    if (src === 'thetadata') d.setDate(d.getDate() - 1);
+    return d.toISOString().split('T')[0];
+  };
+
   const [ticker, setTicker] = useState('AAPL');
   const [startDate, setStartDate] = useState('2023-01-03');
-  const [endDate, setEndDate] = useState('2024-01-03');
+  const [endDate, setEndDate] = useState(() => defaultEndDate('synthetic'));
   const [startingCash, setStartingCash] = useState(100000);
   const [commission, setCommission] = useState(0);
   const [dataSource, setDataSource] = useState<'synthetic' | 'thetadata'>('synthetic');
@@ -758,7 +766,16 @@ function App() {
                         <button
                           key={src}
                           type="button"
-                          onClick={() => { setDataSource(src); markStale(); }}
+                          onClick={() => {
+                            // Auto-shift endDate to the new source's default
+                            // only if the user hasn't customized it (still
+                            // matches the current source's default).
+                            if (endDate === defaultEndDate(dataSource)) {
+                              setEndDate(defaultEndDate(src));
+                            }
+                            setDataSource(src);
+                            markStale();
+                          }}
                           style={{
                             padding: '6px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
                             backgroundColor: dataSource === src ? 'hsl(var(--accent))' : 'transparent',

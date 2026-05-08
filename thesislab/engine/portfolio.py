@@ -56,8 +56,12 @@ class Portfolio:
 
         holding_days = (closing_trade.trade_date - position.entry_trade.trade_date).days
 
-        # Compute position sizing
-        contracts = sum(abs(leg.quantity) for leg in position.entry_trade.legs)
+        # Position size in "strategy units" — for a vertical spread of 10
+        # contracts, each leg's |qty| is 10, so we want 10 (not 20). Using
+        # min(|qty|) extracts the per-strategy quantity correctly across
+        # all leg ratios (1:1 spreads, 1:2:1 butterflies, etc.).
+        contracts = min(abs(leg.quantity) for leg in position.entry_trade.legs) \
+            if position.entry_trade.legs else 0
         notional = abs(position.entry_trade.net_premium)
 
         # Compute net greeks at entry
