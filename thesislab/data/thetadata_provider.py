@@ -230,10 +230,15 @@ class ThetaDataProvider:
         lo_strike = min(prices) * (1 - self.strike_pct)
         hi_strike = max(prices) * (1 + self.strike_pct)
 
-        # Expirations: anything expiring up to max_dte days past end_date.
+        # Expirations: only those that can actually be entered given the
+        # strategy's DTE window. An expiration X is in scope iff some entry
+        # day D in [start_date, end_date] satisfies min_dte <= (X-D) <= max_dte
+        # — i.e., (start_date + min_dte) <= X <= (end_date + max_dte).
         # For SPX, weeklies live under root "SPXW" — query both and combine
         # so dailies/weeklies are included, not just 3rd-Friday monthlies.
-        exp_horizon = self.end_date + timedelta(days=self.max_dte)
+        min_dte_window, max_dte_window = self.dte_window
+        exp_lower = self.start_date + timedelta(days=min_dte_window)
+        exp_upper = self.end_date + timedelta(days=max_dte_window + self.close_buffer_days)
         exp_symbols = [self.ticker]
         if self.ticker == "SPX":
             exp_symbols.append("SPXW")
@@ -245,7 +250,7 @@ class ThetaDataProvider:
                 continue
             for _, r in exp_df.iterrows():
                 d = _to_date(r.get("expiration"))
-                if d and self.start_date <= d <= exp_horizon:
+                if d and exp_lower <= d <= exp_upper:
                     exp_set.add(d)
         expirations = sorted(exp_set)
 
