@@ -260,7 +260,13 @@ export function StrategyPanel({ strategy, onChange, underlyingPrice }: Props) {
               <option value="wednesday">Wednesday only</option>
               <option value="thursday">Thursday only</option>
               <option value="friday">Friday only</option>
+              <option value="weekly">Weekly (Mon → Fri, holiday-aware)</option>
             </select>
+            {strategy.entry_dow === 'weekly' && (
+              <p className="text-xs text-gray-500" style={{ marginTop: '4px' }}>
+                Opens on the first trading day of each week and targets the last trading day's expiration. Min/Max DTE are overridden automatically.
+              </p>
+            )}
           </div>
         </div>
 

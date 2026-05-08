@@ -151,6 +151,24 @@ def has_expiration_data(symbol: str, expiration: date) -> bool:
         conn.close()
 
 
+def expiration_quote_date_range(symbol: str, expiration: date) -> tuple[date, date] | None:
+    """Return (min_quote_date, max_quote_date) cached for this (symbol, expiration),
+    or None if no rows exist. Used to detect when an earlier run partially
+    populated an expiration but didn't fetch all the days we need now."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "SELECT MIN(quote_date), MAX(quote_date) FROM option_eod WHERE symbol = ? AND expiration = ?",
+            (symbol, expiration.isoformat()),
+        )
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        return date.fromisoformat(row[0]), date.fromisoformat(row[1])
+    finally:
+        conn.close()
+
+
 def cached_dates_with_options(symbol: str, start: date, end: date) -> list[date]:
     """Return the distinct dates within [start, end] that have any cached option data."""
     conn = _connect()

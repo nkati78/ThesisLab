@@ -254,9 +254,26 @@ class ThetaDataProvider:
                     exp_set.add(d)
         expirations = sorted(exp_set)
 
-        # Skip expirations already fully cached. Catches the case where a
-        # prior run pulled SPX monthlies but not SPXW weeklies, etc.
-        missing = [exp for exp in expirations if not cache.has_expiration_data(self.ticker, exp)]
+        # Determine which expirations need a (re-)fetch. An expiration counts
+        # as missing if either (a) we have no cached rows at all, or (b) the
+        # cached date range doesn't extend through what this backtest needs
+        # — covers the case where an earlier run with a shorter end_date
+        # cached only part of an expiration's history.
+        min_dte_w, max_dte_w = self.dte_window
+        missing: list[date] = []
+        for exp in expirations:
+            needed_end = min(self.end_date, exp)
+            needed_start = max(
+                self.start_date,
+                exp - timedelta(days=max_dte_w + self.close_buffer_days),
+            )
+            cached_range = cache.expiration_quote_date_range(self.ticker, exp)
+            if cached_range is None:
+                missing.append(exp)
+                continue
+            cached_min, cached_max = cached_range
+            if cached_min > needed_start or cached_max < needed_end:
+                missing.append(exp)
         if not missing:
             return
 

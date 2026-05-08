@@ -294,7 +294,16 @@ def run_backtest(req: BacktestRequest):
         )
 
     strategy = _build_strategy(req.strategy)
-    filters = _build_filters(req.advanced_filters, entry_dow=req.strategy.entry_dow)
+    # Weekly mode: wrap the strategy so it enters on the first trading day of
+    # each calendar week and targets the last trading day's expiration. The
+    # WeekdayFilter is set to "any" since the wrapper handles entry gating.
+    if req.strategy.entry_dow == "weekly":
+        from thesislab.strategies.weekly_adapter import WeeklyAdapter
+        trading_dates = provider.get_trading_dates(req.ticker.upper(), start, end)
+        strategy = WeeklyAdapter(strategy, trading_dates)
+        filters = _build_filters(req.advanced_filters, entry_dow="any")
+    else:
+        filters = _build_filters(req.advanced_filters, entry_dow=req.strategy.entry_dow)
     config = BacktestConfig(
         ticker=req.ticker.upper(),
         start_date=start, end_date=end,
