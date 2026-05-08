@@ -19,6 +19,7 @@ class CoveredCall:
     min_dte: int = 25
     max_dte: int = 45
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50  # close when 50% of max profit captured
     close_at_dte: int = 7  # close when 7 DTE remaining
     close_at_profit_enabled: bool = False
@@ -48,8 +49,9 @@ class CoveredCall:
         if best.delta is None:
             return []
 
-        leg = Leg(contract=best, quantity=-1)
-        premium = best.mid * 100  # credit received
+        n = self.contracts_per_trade
+        leg = Leg(contract=best, quantity=-n)
+        premium = best.mid * 100 * n  # credit received
         return [Trade(legs=(leg,), trade_date=chain.quote_date, net_premium=premium)]
 
     def should_close(self, position: Position, chain: OptionsChain) -> CloseSignal | None:
@@ -70,7 +72,8 @@ class CoveredCall:
 
         if self.close_at_profit_enabled and current is not None:
             entry_credit = position.entry_trade.net_premium
-            cost_to_close = current.mid * 100
+            n = abs(entry_leg.quantity) or 1
+            cost_to_close = current.mid * 100 * n
             profit_captured = entry_credit - cost_to_close
             max_profit = entry_credit
             if max_profit > 0 and profit_captured / max_profit >= self.close_at_profit_pct:
@@ -81,9 +84,10 @@ class CoveredCall:
     def _closing_trade(self, entry_leg: Leg, chain: OptionsChain, price: float) -> Trade:
         """Create a trade to close the position (buy back the short call)."""
         close_leg = Leg(contract=entry_leg.contract, quantity=-entry_leg.quantity)
+        n = abs(entry_leg.quantity) or 1
         return Trade(
             legs=(close_leg,),
             trade_date=chain.quote_date,
-            net_premium=-price * 100,  # debit to close
+            net_premium=-price * 100 * n,  # debit to close
         )
 

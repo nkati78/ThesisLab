@@ -58,6 +58,7 @@ class StrategyConfig(BaseModel):
     short_delta: float = 0.25
     spread_width: float = 5.0
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 2.0
     close_at_dte: int = 7

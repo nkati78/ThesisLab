@@ -20,6 +20,7 @@ class Strangle:
     min_dte: int = 25
     max_dte: int = 45
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 1.00
     close_at_dte: int = 7
@@ -65,13 +66,14 @@ class Strangle:
         if matching_puts:
             otm_put = min(matching_puts, key=lambda c: abs(abs(c.delta or 0) - self.short_delta))
 
-        qty = -1 if self.is_short else 1
+        n = self.contracts_per_trade
+        qty = -n if self.is_short else n
         legs = (
             Leg(contract=otm_call, quantity=qty),
             Leg(contract=otm_put, quantity=qty),
         )
 
-        total_premium = (otm_call.mid + otm_put.mid) * 100
+        total_premium = (otm_call.mid + otm_put.mid) * 100 * n
         if self.is_short:
             net_premium = total_premium  # credit received
         else:

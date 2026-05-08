@@ -310,7 +310,7 @@ function App() {
   const location = useLocation();
   const [strategy, setStrategy] = useState<StrategyConfig>({
     type: '', min_dte: 25, max_dte: 45, short_delta: 0.25,
-    spread_width: 5, max_positions: 1, close_at_profit_pct: 0.5,
+    spread_width: 5, max_positions: 1, contracts_per_trade: 1, close_at_profit_pct: 0.5,
     close_at_loss_pct: 2.0, close_at_dte: 7,
     close_at_profit_enabled: false, close_at_loss_enabled: false,
     close_at_dte_enabled: false, close_on_short_breach: false,

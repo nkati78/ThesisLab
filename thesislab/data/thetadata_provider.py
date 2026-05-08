@@ -164,19 +164,10 @@ class ThetaDataProvider:
         # Step 1: ensure stock EOD is cached for the full range
         self._ensure_stock_eod()
 
-        # Step 2: ensure we have option data covering the full range.
-        # We consider it covered if both endpoints have data — partial coverage
-        # forces a re-fetch (cheap due to ThetaData's bulk-by-expiration calls).
-        cached_dates = cache.cached_dates_with_options(
-            self.ticker, self.start_date, self.end_date,
-        )
-        needs_fetch = (
-            not cached_dates
-            or cached_dates[0] > self.start_date + timedelta(days=4)
-            or cached_dates[-1] < self.end_date - timedelta(days=4)
-        )
-        if needs_fetch:
-            self._fetch_chain_universe()
+        # Step 2: fetch any missing expirations. Per-expiration check is
+        # important because earlier runs may have only fetched some roots
+        # (e.g., SPX monthlies but not SPXW weeklies).
+        self._fetch_chain_universe()
 
         # Step 3: hydrate in-memory dict[date] -> OptionsChain
         self._build_chains_from_cache()
@@ -258,12 +249,18 @@ class ThetaDataProvider:
                     exp_set.add(d)
         expirations = sorted(exp_set)
 
-        # One API call per expiration (all strikes, both rights, full date range)
+        # Skip expirations already fully cached. Catches the case where a
+        # prior run pulled SPX monthlies but not SPXW weeklies, etc.
+        missing = [exp for exp in expirations if not cache.has_expiration_data(self.ticker, exp)]
+        if not missing:
+            return
+
+        # One API call per missing expiration (all strikes, both rights, clamped DTE window)
         synthesized_stock: dict[str, float] = {}  # quote_date -> close (for indices)
         with ThreadPoolExecutor(max_workers=self.max_workers) as ex:
             futures = [
                 ex.submit(self._fetch_expiration, exp, lo_strike, hi_strike)
-                for exp in expirations
+                for exp in missing
             ]
             for f in as_completed(futures):
                 rows = f.result()
@@ -273,14 +270,21 @@ class ThetaDataProvider:
                     for r in rows:
                         if r.get("underlying_price") and r["quote_date"] not in synthesized_stock:
                             synthesized_stock[r["quote_date"]] = r["underlying_price"]
-        # Persist synthesized stock prices so future cache hits / benchmark work
-        if synthesized_stock and not cache.fetch_stock_close(self.ticker, self.start_date):
-            cache.store_stock_eod([
-                {"symbol": self.ticker, "quote_date": qd,
-                 "open": None, "high": None, "low": None, "close": close,
-                 "volume": None}
-                for qd, close in synthesized_stock.items()
-            ])
+        # Persist synthesized stock prices for any dates not yet in stock_eod.
+        # INSERT OR REPLACE keeps existing rows intact for dates already covered.
+        if synthesized_stock:
+            new_rows = []
+            for qd, close in synthesized_stock.items():
+                # Skip dates that already have a real stock close cached
+                qd_date = date.fromisoformat(qd)
+                if cache.fetch_stock_close(self.ticker, qd_date) is None:
+                    new_rows.append({
+                        "symbol": self.ticker, "quote_date": qd,
+                        "open": None, "high": None, "low": None, "close": close,
+                        "volume": None,
+                    })
+            if new_rows:
+                cache.store_stock_eod(new_rows)
 
     def _sample_underlying_from_options(self) -> float | None:
         """For indices like SPX with no stock_history_eod, fetch one near-term

@@ -27,6 +27,7 @@ class DebitSpread:
     min_dte: int = 25
     max_dte: int = 45
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 1.00
     close_at_dte: int = 7
@@ -66,11 +67,12 @@ class DebitSpread:
         if short_call is None:
             return []
 
+        n = self.contracts_per_trade
         legs = (
-            Leg(contract=long_call, quantity=1),
-            Leg(contract=short_call, quantity=-1),
+            Leg(contract=long_call, quantity=n),
+            Leg(contract=short_call, quantity=-n),
         )
-        net_debit = (long_call.mid - short_call.mid) * 100
+        net_debit = (long_call.mid - short_call.mid) * 100 * n
         if net_debit <= 0:
             return []
         return [Trade(legs=legs, trade_date=chain.quote_date, net_premium=-net_debit)]
@@ -95,11 +97,12 @@ class DebitSpread:
         if short_put is None:
             return []
 
+        n = self.contracts_per_trade
         legs = (
-            Leg(contract=long_put, quantity=1),
-            Leg(contract=short_put, quantity=-1),
+            Leg(contract=long_put, quantity=n),
+            Leg(contract=short_put, quantity=-n),
         )
-        net_debit = (long_put.mid - short_put.mid) * 100
+        net_debit = (long_put.mid - short_put.mid) * 100 * n
         if net_debit <= 0:
             return []
         return [Trade(legs=legs, trade_date=chain.quote_date, net_premium=-net_debit)]

@@ -20,6 +20,7 @@ class IronCondor:
     min_dte: int = 30
     max_dte: int = 50
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 2.00  # close at 2x credit received
     close_at_dte: int = 10
@@ -65,13 +66,14 @@ class IronCondor:
         if long_put is None or long_call is None:
             return []
 
+        n = self.contracts_per_trade
         legs = (
-            Leg(contract=short_put, quantity=-1),
-            Leg(contract=long_put, quantity=1),
-            Leg(contract=short_call, quantity=-1),
-            Leg(contract=long_call, quantity=1),
+            Leg(contract=short_put, quantity=-n),
+            Leg(contract=long_put, quantity=n),
+            Leg(contract=short_call, quantity=-n),
+            Leg(contract=long_call, quantity=n),
         )
-        net_credit = (short_put.mid + short_call.mid - long_put.mid - long_call.mid) * 100
+        net_credit = (short_put.mid + short_call.mid - long_put.mid - long_call.mid) * 100 * n
         if net_credit <= 0:
             return []
 

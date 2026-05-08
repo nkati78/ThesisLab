@@ -51,6 +51,7 @@ export interface StrategyConfig {
   short_delta: number;
   spread_width: number;
   max_positions: number;
+  contracts_per_trade: number;
   close_at_profit_pct: number;
   close_at_loss_pct: number;
   close_at_dte: number;
@@ -145,6 +146,7 @@ export const DEFAULT_STRATEGY: StrategyConfig = {
   short_delta: 0.25,
   spread_width: 5,
   max_positions: 1,
+  contracts_per_trade: 1,
   close_at_profit_pct: 0.5,
   close_at_loss_pct: 2.0,
   close_at_dte: 7,

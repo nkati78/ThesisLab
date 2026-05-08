@@ -24,6 +24,7 @@ class SingleLeg:
     min_dte: int = 25
     max_dte: int = 45
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 1.00
     close_at_dte: int = 7
@@ -54,9 +55,10 @@ class SingleLeg:
         if contract.delta is None:
             return []
 
-        qty = 1 if is_long else -1
+        n = self.contracts_per_trade
+        qty = n if is_long else -n
         legs = (Leg(contract=contract, quantity=qty),)
-        premium = contract.mid * 100
+        premium = contract.mid * 100 * n
         net_premium = premium if not is_long else -premium
 
         return [Trade(legs=legs, trade_date=chain.quote_date, net_premium=net_premium)]
@@ -79,7 +81,8 @@ class SingleLeg:
         if current is None:
             return None
 
-        current_value = current.mid * 100
+        n = abs(position.entry_trade.legs[0].quantity) or 1
+        current_value = current.mid * 100 * n
         entry_premium = position.entry_trade.net_premium
         is_long = self.leg_direction in (LegDirection.LONG_CALL, LegDirection.LONG_PUT)
 
@@ -110,7 +113,8 @@ class SingleLeg:
             for leg in position.entry_trade.legs
         )
         current = find_current_contract(position.entry_trade.legs[0].contract, chain)
-        value = (current.mid * 100) if current else 0.0
+        n = abs(position.entry_trade.legs[0].quantity) or 1
+        value = (current.mid * 100 * n) if current else 0.0
         is_long = self.leg_direction in (LegDirection.LONG_CALL, LegDirection.LONG_PUT)
         premium = value if is_long else -value
         return Trade(legs=close_legs, trade_date=chain.quote_date, net_premium=premium)

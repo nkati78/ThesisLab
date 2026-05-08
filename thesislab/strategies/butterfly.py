@@ -28,6 +28,7 @@ class Butterfly:
     min_dte: int = 25
     max_dte: int = 45
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 1.00
     close_at_dte: int = 7
@@ -70,13 +71,14 @@ class Butterfly:
         if long_call is None or long_put is None:
             return []
 
+        n = self.contracts_per_trade
         legs = (
-            Leg(contract=atm_call, quantity=-1),
-            Leg(contract=atm_put, quantity=-1),
-            Leg(contract=long_call, quantity=1),
-            Leg(contract=long_put, quantity=1),
+            Leg(contract=atm_call, quantity=-n),
+            Leg(contract=atm_put, quantity=-n),
+            Leg(contract=long_call, quantity=n),
+            Leg(contract=long_put, quantity=n),
         )
-        net_credit = (atm_call.mid + atm_put.mid - long_call.mid - long_put.mid) * 100
+        net_credit = (atm_call.mid + atm_put.mid - long_call.mid - long_put.mid) * 100 * n
         if net_credit <= 0:
             return []
 
@@ -96,12 +98,13 @@ class Butterfly:
         if lower_call is None or upper_call is None:
             return []
 
+        n = self.contracts_per_trade
         legs = (
-            Leg(contract=lower_call, quantity=1),
-            Leg(contract=mid_call, quantity=-2),
-            Leg(contract=upper_call, quantity=1),
+            Leg(contract=lower_call, quantity=n),
+            Leg(contract=mid_call, quantity=-2 * n),
+            Leg(contract=upper_call, quantity=n),
         )
-        net_debit = (lower_call.mid - 2 * mid_call.mid + upper_call.mid) * 100
+        net_debit = (lower_call.mid - 2 * mid_call.mid + upper_call.mid) * 100 * n
         if net_debit <= 0:
             return []
 
@@ -120,12 +123,13 @@ class Butterfly:
         if lower_put is None or upper_put is None:
             return []
 
+        n = self.contracts_per_trade
         legs = (
-            Leg(contract=lower_put, quantity=1),
-            Leg(contract=mid_put, quantity=-2),
-            Leg(contract=upper_put, quantity=1),
+            Leg(contract=lower_put, quantity=n),
+            Leg(contract=mid_put, quantity=-2 * n),
+            Leg(contract=upper_put, quantity=n),
         )
-        net_debit = (lower_put.mid - 2 * mid_put.mid + upper_put.mid) * 100
+        net_debit = (lower_put.mid - 2 * mid_put.mid + upper_put.mid) * 100 * n
         if net_debit <= 0:
             return []
 

@@ -19,6 +19,7 @@ class ProtectivePut:
     min_dte: int = 25
     max_dte: int = 45
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 1.00  # close at 100% profit (put doubled)
     close_at_dte: int = 7
     close_at_loss_pct: float = 0.50  # cut loss at 50%
@@ -45,8 +46,9 @@ class ProtectivePut:
         if best.delta is None:
             return []
 
-        leg = Leg(contract=best, quantity=1)
-        premium = -best.mid * 100  # debit paid
+        n = self.contracts_per_trade
+        leg = Leg(contract=best, quantity=n)
+        premium = -best.mid * 100 * n  # debit paid
         return [Trade(legs=(leg,), trade_date=chain.quote_date, net_premium=premium)]
 
     def should_close(self, position: Position, chain: OptionsChain) -> CloseSignal | None:
@@ -71,8 +73,9 @@ class ProtectivePut:
         if not (self.close_at_profit_enabled or self.close_at_loss_enabled):
             return None
 
+        n = abs(entry_leg.quantity) or 1
         entry_cost = abs(position.entry_trade.net_premium)
-        current_value = current.mid * 100
+        current_value = current.mid * 100 * n
 
         if entry_cost > 0:
             profit_pct = (current_value - entry_cost) / entry_cost
@@ -87,9 +90,10 @@ class ProtectivePut:
 
     def _closing_trade(self, entry_leg: Leg, chain: OptionsChain, price: float) -> Trade:
         close_leg = Leg(contract=entry_leg.contract, quantity=-entry_leg.quantity)
+        n = abs(entry_leg.quantity) or 1
         return Trade(
             legs=(close_leg,),
             trade_date=chain.quote_date,
-            net_premium=price * 100,  # credit from selling
+            net_premium=price * 100 * n,  # credit from selling
         )
 

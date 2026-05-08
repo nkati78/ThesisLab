@@ -40,6 +40,7 @@ app.add_middleware(
 
 def _build_strategy(cfg):
     t = cfg.type
+    common_kw = {"contracts_per_trade": cfg.contracts_per_trade}
     exit_kw = {
         "close_at_profit_pct": cfg.close_at_profit_pct,
         "close_at_loss_pct": cfg.close_at_loss_pct,
@@ -63,7 +64,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     # ── Credit vertical spreads ──
@@ -73,7 +74,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta, spread_width=cfg.spread_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
     elif t == "short_call_spread":
         return VerticalSpread(
@@ -81,7 +82,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta, spread_width=cfg.spread_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     # ── Debit vertical spreads ──
@@ -91,7 +92,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta, spread_width=cfg.spread_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
     elif t == "debit_put_spread":
         return DebitSpread(
@@ -99,7 +100,7 @@ def _build_strategy(cfg):
             short_delta=cfg.short_delta, spread_width=cfg.spread_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
             max_positions=cfg.max_positions,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     # ── Calendar spreads ──
@@ -107,13 +108,13 @@ def _build_strategy(cfg):
         return CalendarSpread(
             name="CalendarCallSpread", calendar_type=CalendarType.CALL,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
     elif t == "calendar_put_spread":
         return CalendarSpread(
             name="CalendarPutSpread", calendar_type=CalendarType.PUT,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     # ── Iron condor ──
@@ -121,19 +122,19 @@ def _build_strategy(cfg):
         return IronCondor(
             short_delta=cfg.short_delta, wing_width=cfg.wing_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     # ── Straddles ──
     elif t == "straddle":
         return Straddle(
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
     elif t == "short_straddle":
         return ShortStraddle(
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     # ── Strangles ──
@@ -142,14 +143,14 @@ def _build_strategy(cfg):
             name="LongStrangle", is_short=False,
             short_delta=cfg.short_delta,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
     elif t == "short_strangle":
         return Strangle(
             name="ShortStrangle", is_short=True,
             short_delta=cfg.short_delta,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     # ── Butterflies ──
@@ -158,33 +159,33 @@ def _build_strategy(cfg):
             name="IronButterfly", butterfly_type=ButterflyType.IRON,
             wing_width=cfg.wing_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
     elif t == "long_call_butterfly":
         return Butterfly(
             name="LongCallButterfly", butterfly_type=ButterflyType.LONG_CALL,
             wing_width=cfg.wing_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
     elif t == "long_put_butterfly":
         return Butterfly(
             name="LongPutButterfly", butterfly_type=ButterflyType.LONG_PUT,
             wing_width=cfg.wing_width,
             min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     # ── Legacy strategies ──
     elif t == "covered_call":
         return CoveredCall(
             delta_target=cfg.short_delta, min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
     elif t == "protective_put":
         return ProtectivePut(
             delta_target=cfg.put_delta, min_dte=cfg.min_dte, max_dte=cfg.max_dte,
-            **exit_kw,
+            **common_kw, **exit_kw,
         )
 
     raise ValueError(f"Unknown strategy: {t}")

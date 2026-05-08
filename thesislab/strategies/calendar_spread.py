@@ -26,6 +26,7 @@ class CalendarSpread:
     max_dte: int = 45
     back_month_offset: int = 30  # additional DTE for the long leg
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50
     close_at_loss_pct: float = 1.00
     close_at_dte: int = 5  # close when front month is near expiry
@@ -73,11 +74,12 @@ class CalendarSpread:
 
         back = same_strike[0]
 
+        n = self.contracts_per_trade
         legs = (
-            Leg(contract=front, quantity=-1),  # sell front month
-            Leg(contract=back, quantity=1),     # buy back month
+            Leg(contract=front, quantity=-n),  # sell front month
+            Leg(contract=back, quantity=n),     # buy back month
         )
-        net_debit = (back.mid - front.mid) * 100
+        net_debit = (back.mid - front.mid) * 100 * n
         if net_debit <= 0:
             return []
 

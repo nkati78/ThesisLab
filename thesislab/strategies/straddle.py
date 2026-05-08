@@ -17,6 +17,7 @@ class Straddle:
     min_dte: int = 25
     max_dte: int = 45
     max_positions: int = 1
+    contracts_per_trade: int = 1
     close_at_profit_pct: float = 0.50  # close at 50% profit
     close_at_loss_pct: float = 0.30  # cut loss at 30%
     close_at_dte: int = 7
@@ -47,11 +48,12 @@ class Straddle:
             return []
 
         atm_put = matching_puts[0]
+        n = self.contracts_per_trade
         legs = (
-            Leg(contract=atm_call, quantity=1),
-            Leg(contract=atm_put, quantity=1),
+            Leg(contract=atm_call, quantity=n),
+            Leg(contract=atm_put, quantity=n),
         )
-        total_debit = (atm_call.mid + atm_put.mid) * 100
+        total_debit = (atm_call.mid + atm_put.mid) * 100 * n
         return [Trade(legs=legs, trade_date=chain.quote_date, net_premium=-total_debit)]
 
     def should_close(self, position: Position, chain: OptionsChain) -> CloseSignal | None:

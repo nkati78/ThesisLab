@@ -138,6 +138,19 @@ def fetch_stock_close(symbol: str, on_date: date) -> float | None:
         conn.close()
 
 
+def has_expiration_data(symbol: str, expiration: date) -> bool:
+    """True if we have any cached EOD rows for this (symbol, expiration)."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "SELECT 1 FROM option_eod WHERE symbol = ? AND expiration = ? LIMIT 1",
+            (symbol, expiration.isoformat()),
+        )
+        return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
 def cached_dates_with_options(symbol: str, start: date, end: date) -> list[date]:
     """Return the distinct dates within [start, end] that have any cached option data."""
     conn = _connect()
