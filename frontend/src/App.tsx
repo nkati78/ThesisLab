@@ -470,6 +470,10 @@ function App() {
     if (!ticker.trim()) { setError('Symbol is required'); return; }
     if (!startDate) { setError('Start Date is required'); return; }
     if (!endDate) { setError('End Date is required'); return; }
+    const today = defaultEndDate('synthetic');
+    if (startDate < '2019-01-01') { setError('Start Date must be 2019-01-01 or later'); return; }
+    if (endDate > today) { setError('End Date cannot be in the future'); return; }
+    if (startDate > endDate) { setError('Start Date must be before End Date'); return; }
 
     // Switch to loading — show progress bar on setup view
     setActiveSection('setup');
@@ -736,11 +740,13 @@ function App() {
                   <div className="w-40">
                     <label className="block mb-1" style={{ fontSize: '14px', color: '#d1d5db' }}>Start Date <span style={{ color: '#f87171' }}>*</span></label>
                     <input type="date" className="input-field" value={startDate}
+                      min="2019-01-01" max={defaultEndDate('synthetic')}
                       onChange={(e) => handleSetStartDate(e.target.value)} />
                   </div>
                   <div className="w-40">
                     <label className="block mb-1" style={{ fontSize: '14px', color: '#d1d5db' }}>End Date <span style={{ color: '#f87171' }}>*</span></label>
                     <input type="date" className="input-field" value={endDate}
+                      min="2019-01-01" max={defaultEndDate('synthetic')}
                       onChange={(e) => handleSetEndDate(e.target.value)} />
                   </div>
                   <div className="w-32">
