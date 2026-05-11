@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS contract_universe (
     right TEXT NOT NULL,
     PRIMARY KEY (symbol, quote_date, expiration, strike, right)
 );
+
+CREATE TABLE IF NOT EXISTS known_expirations (
+    symbol TEXT NOT NULL,       -- API root used to fetch (e.g. SPX or SPXW)
+    expiration TEXT NOT NULL,   -- YYYY-MM-DD
+    PRIMARY KEY (symbol, expiration)
+);
 """
 
 
@@ -180,5 +186,73 @@ def cached_dates_with_options(symbol: str, start: date, end: date) -> list[date]
             (symbol, start.isoformat(), end.isoformat()),
         )
         return [date.fromisoformat(row[0]) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def fetch_option_eod_for_range(
+    symbol: str, start: date, end: date,
+) -> dict[date, list[dict]]:
+    """Return all cached option EOD rows for a symbol in [start, end],
+    grouped by quote_date. One SQL query instead of one per day."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            """SELECT symbol, expiration, strike, right, quote_date,
+                      bid, ask, open, high, low, close, volume, open_interest,
+                      delta, gamma, theta, vega, implied_vol, underlying_price
+               FROM option_eod
+               WHERE symbol = ? AND quote_date BETWEEN ? AND ?""",
+            (symbol, start.isoformat(), end.isoformat()),
+        )
+        cols = [d[0] for d in cur.description]
+        out: dict[date, list[dict]] = {}
+        for row in cur.fetchall():
+            r = dict(zip(cols, row))
+            qd = date.fromisoformat(r["quote_date"])
+            out.setdefault(qd, []).append(r)
+        return out
+    finally:
+        conn.close()
+
+
+def store_expirations(symbol: str, expirations: Iterable[date]) -> None:
+    """Persist the set of expirations returned by option_list_expirations for
+    a given API root symbol (e.g. SPX or SPXW). INSERT OR IGNORE so repeated
+    calls are no-ops."""
+    conn = _connect()
+    try:
+        conn.executemany(
+            "INSERT OR IGNORE INTO known_expirations (symbol, expiration) VALUES (?, ?)",
+            [(symbol, e.isoformat()) for e in expirations],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def fetch_expirations(symbol: str) -> list[date]:
+    """Return all cached expirations for a given API root symbol, sorted."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "SELECT expiration FROM known_expirations WHERE symbol = ? ORDER BY expiration",
+            (symbol,),
+        )
+        return [date.fromisoformat(row[0]) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def max_known_expiration(symbol: str) -> date | None:
+    """Return the latest cached expiration for a symbol, or None if no entries."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "SELECT MAX(expiration) FROM known_expirations WHERE symbol = ?",
+            (symbol,),
+        )
+        row = cur.fetchone()
+        return date.fromisoformat(row[0]) if row and row[0] else None
     finally:
         conn.close()

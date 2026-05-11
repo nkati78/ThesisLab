@@ -265,6 +265,8 @@ def _build_filters(adv, entry_dow: str = "any") -> EntryExitFilters:
 
 @app.post("/api/backtest", response_model=BacktestResponse)
 def run_backtest(req: BacktestRequest):
+    import time
+    _t_total = time.perf_counter()
     start = datetime.strptime(req.start_date, "%Y-%m-%d").date()
     end = datetime.strptime(req.end_date, "%Y-%m-%d").date()
 
@@ -313,7 +315,12 @@ def run_backtest(req: BacktestRequest):
 
     backtester = Backtester(config=config, provider=provider,
                             strategies=[strategy], filters=filters)
+    _t_provider = time.perf_counter()
     result = backtester.run()
+    _t_loop = time.perf_counter()
+    print(f"[backtest] provider_build={_t_provider-_t_total:.2f}s "
+          f"loop={_t_loop-_t_provider:.2f}s "
+          f"trades={len(result.closed_positions)}", flush=True)
 
     # Format response
     equity_curve = [

@@ -160,17 +160,19 @@ class ThetaDataProvider:
     def _populate(self) -> None:
         """Ensure cache has all data for [start_date, end_date], then load
         chains into memory for fast per-day lookups."""
-
-        # Step 1: ensure stock EOD is cached for the full range
+        import time
+        t0 = time.perf_counter()
         self._ensure_stock_eod()
+        t1 = time.perf_counter()
+        print(f"[provider] stock_eod: {t1-t0:.2f}s", flush=True)
 
-        # Step 2: fetch any missing expirations. Per-expiration check is
-        # important because earlier runs may have only fetched some roots
-        # (e.g., SPX monthlies but not SPXW weeklies).
         self._fetch_chain_universe()
+        t2 = time.perf_counter()
+        print(f"[provider] chain_universe: {t2-t1:.2f}s", flush=True)
 
-        # Step 3: hydrate in-memory dict[date] -> OptionsChain
         self._build_chains_from_cache()
+        t3 = time.perf_counter()
+        print(f"[provider] build_chains: {t3-t2:.2f}s ({len(self._chain_by_date)} days)", flush=True)
 
     def _ensure_stock_eod(self) -> None:
         # Try cache first
@@ -244,14 +246,34 @@ class ThetaDataProvider:
             exp_symbols.append("SPXW")
         exp_set: set[date] = set()
         for sym in exp_symbols:
+            # Use cached expirations if they extend past what we need. The
+            # expiration list only grows over time, so a cache that already
+            # contains expirations >= exp_upper is complete for this run.
+            cached_max = cache.max_known_expiration(sym)
+            cached_exps = cache.fetch_expirations(sym) if cached_max else []
+            if cached_max and cached_max >= exp_upper:
+                for d in cached_exps:
+                    if exp_lower <= d <= exp_upper:
+                        exp_set.add(d)
+                continue
+            # Cache miss or stale — hit the API and persist.
             try:
                 exp_df = self._client.option_list_expirations(symbol=sym)
             except Exception:
+                # Fall back to whatever we have cached
+                for d in cached_exps:
+                    if exp_lower <= d <= exp_upper:
+                        exp_set.add(d)
                 continue
+            fresh: list[date] = []
             for _, r in exp_df.iterrows():
                 d = _to_date(r.get("expiration"))
-                if d and exp_lower <= d <= exp_upper:
-                    exp_set.add(d)
+                if d:
+                    fresh.append(d)
+                    if exp_lower <= d <= exp_upper:
+                        exp_set.add(d)
+            if fresh:
+                cache.store_expirations(sym, fresh)
         expirations = sorted(exp_set)
 
         # Determine which expirations need a (re-)fetch. An expiration counts
@@ -391,26 +413,26 @@ class ThetaDataProvider:
         return out
 
     def _build_chains_from_cache(self) -> None:
-        """Read all cached rows for our window into in-memory chains."""
-        cur = self.start_date
-        while cur <= self.end_date:
-            rows = cache.fetch_option_eod_for_date(self.ticker, cur)
-            if rows:
-                contracts: list[OptionContract] = []
-                underlying = None
-                for r in rows:
-                    if underlying is None and r.get("underlying_price"):
-                        underlying = r["underlying_price"]
-                    contracts.append(_row_to_contract(r))
-                if underlying is None:
-                    underlying = cache.fetch_stock_close(self.ticker, cur) or 0.0
-                self._chain_by_date[cur] = OptionsChain(
-                    underlying=self.ticker,
-                    quote_date=cur,
-                    underlying_price=underlying,
-                    contracts=tuple(contracts),
-                )
-            cur += timedelta(days=1)
+        """Read all cached rows for our window into in-memory chains.
+        One SQL query for the entire range, then group by date in Python."""
+        by_date = cache.fetch_option_eod_for_range(
+            self.ticker, self.start_date, self.end_date,
+        )
+        for qd, rows in by_date.items():
+            contracts: list[OptionContract] = []
+            underlying = None
+            for r in rows:
+                if underlying is None and r.get("underlying_price"):
+                    underlying = r["underlying_price"]
+                contracts.append(_row_to_contract(r))
+            if underlying is None:
+                underlying = cache.fetch_stock_close(self.ticker, qd) or 0.0
+            self._chain_by_date[qd] = OptionsChain(
+                underlying=self.ticker,
+                quote_date=qd,
+                underlying_price=underlying,
+                contracts=tuple(contracts),
+            )
 
     # ─── DataProvider Protocol methods ─────────────────────────────────────────
     def get_chain(self, ticker: str, on_date: date) -> OptionsChain | None:
