@@ -109,6 +109,11 @@ def _read_creds() -> tuple[str, str] | None:
     return None
 
 
+# Module-level flag so the coverage backfill runs once per process, not
+# once per provider construction.
+_COVERAGE_BACKFILLED = False
+
+
 # ─── Provider ─────────────────────────────────────────────────────────────────
 class ThetaDataProvider:
     """Standard-tier ThetaData provider with local SQLite caching."""
@@ -154,6 +159,12 @@ class ThetaDataProvider:
         self._client = ThetaClient(
             email=creds[0], password=creds[1], dataframe_type="pandas"
         )
+        global _COVERAGE_BACKFILLED
+        if not _COVERAGE_BACKFILLED:
+            inserted = cache.backfill_coverage_from_existing_rows()
+            if inserted:
+                print(f"[provider] coverage backfill: {inserted} (symbol,exp) pairs", flush=True)
+            _COVERAGE_BACKFILLED = True
         self._populate()
 
     # ─── Bulk population ──────────────────────────────────────────────────────
@@ -276,38 +287,52 @@ class ThetaDataProvider:
                 cache.store_expirations(sym, fresh)
         expirations = sorted(exp_set)
 
-        # Determine which expirations need a (re-)fetch. An expiration counts
-        # as missing if either (a) we have no cached rows at all, or (b) the
-        # cached date range doesn't extend through what this backtest needs
-        # — covers the case where an earlier run with a shorter end_date
-        # cached only part of an expiration's history.
+        # Determine the missing date RANGES for each expiration using the
+        # coverage table — records what we've actually asked ThetaData for,
+        # which is what we want (vs. inferring from data rows, which makes
+        # holidays/weekends with no rows look like missing fetches).
+        import time
         min_dte_w, max_dte_w = self.dte_window
-        missing: list[date] = []
+        fetches: list[tuple[date, date, date]] = []  # (expiration, start, end)
         for exp in expirations:
             needed_end = min(self.end_date, exp)
             needed_start = max(
                 self.start_date,
                 exp - timedelta(days=max_dte_w + self.close_buffer_days),
             )
-            cached_range = cache.expiration_quote_date_range(self.ticker, exp)
-            if cached_range is None:
-                missing.append(exp)
+            if needed_start > needed_end:
                 continue
-            cached_min, cached_max = cached_range
-            if cached_min > needed_start or cached_max < needed_end:
-                missing.append(exp)
-        if not missing:
+            for (gs, ge) in cache.coverage_gaps(self.ticker, exp, needed_start, needed_end):
+                fetches.append((exp, gs, ge))
+        print(f"[provider] in_scope={len(expirations)} fetches={len(fetches)} "
+              f"dte_window={self.dte_window}", flush=True)
+        if not fetches:
             return
 
-        # One API call per missing expiration (all strikes, both rights, clamped DTE window)
-        synthesized_stock: dict[str, float] = {}  # quote_date -> close (for indices)
+        # One API call per (expiration, missing-range) pair
+        synthesized_stock: dict[str, float] = {}
+        _fetch_t0 = time.perf_counter()
+        _done = 0
+        _per_fetch: list[float] = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as ex:
-            futures = [
-                ex.submit(self._fetch_expiration, exp, lo_strike, hi_strike)
-                for exp in missing
-            ]
+            futures = {
+                ex.submit(self._timed_fetch_range, exp, fs, fe, lo_strike, hi_strike):
+                    (exp, fs, fe)
+                for (exp, fs, fe) in fetches
+            }
             for f in as_completed(futures):
-                rows = f.result()
+                exp, fs, fe = futures[f]
+                rows, elapsed = f.result()
+                _per_fetch.append(elapsed)
+                _done += 1
+                if _done % 10 == 0 or _done == len(fetches):
+                    avg = sum(_per_fetch) / len(_per_fetch)
+                    print(f"[provider]   fetched {_done}/{len(fetches)} "
+                          f"(avg {avg:.1f}s/range, wall {time.perf_counter()-_fetch_t0:.0f}s)",
+                          flush=True)
+                # Record that we asked, even if no rows came back — prevents
+                # us from refetching empty date ranges forever.
+                cache.record_coverage(self.ticker, exp, fs, fe)
                 if rows:
                     cache.store_option_eod(rows)
                     # For indices: synthesize stock_eod from underlying_price
@@ -355,19 +380,26 @@ class ThetaDataProvider:
                     continue
         return None
 
-    def _fetch_expiration(
-        self, expiration: date, lo_strike: float, hi_strike: float,
+    def _timed_fetch_range(
+        self, expiration: date, fetch_start: date, fetch_end: date,
+        lo_strike: float, hi_strike: float,
+    ) -> tuple[list[dict], float]:
+        """Wrap _fetch_expiration_range with a wall-time measurement."""
+        import time
+        t0 = time.perf_counter()
+        rows = self._fetch_expiration_range(
+            expiration, fetch_start, fetch_end, lo_strike, hi_strike,
+        )
+        return rows, time.perf_counter() - t0
+
+    def _fetch_expiration_range(
+        self, expiration: date, fetch_start: date, fetch_end: date,
+        lo_strike: float, hi_strike: float,
     ) -> list[dict]:
-        """Fetch greeks/eod for ALL strikes (both calls and puts) at this
-        expiration. Date range is clamped to when this expiration is
-        actually in the strategy's DTE window — for a 4-DTE strategy
-        on a Friday expiration we only need 4 trading days, not a full year."""
-        min_dte, max_dte = self.dte_window
-        # An expiration E is in scope for entry on day D when min_dte <= (E - D) <= max_dte,
-        # i.e., D ∈ [E - max_dte - close_buffer, E - min_dte].
-        # Buffer accounts for held positions closing at expiration / close_at_dte.
-        fetch_start = max(self.start_date, expiration - timedelta(days=max_dte + self.close_buffer_days))
-        fetch_end = min(self.end_date, expiration)
+        """Fetch greeks/eod for all strikes at this expiration over an
+        explicit date range. Caller decides exactly which dates to pull —
+        used to fetch only the missing prefix/suffix instead of the whole
+        window when partial cache coverage exists."""
         if fetch_start > fetch_end:
             return []
         root = _root_for(self.ticker, expiration)

@@ -7,7 +7,7 @@ API, and lets the user keep a private archive after canceling the subscription.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -53,6 +53,18 @@ CREATE TABLE IF NOT EXISTS known_expirations (
     symbol TEXT NOT NULL,       -- API root used to fetch (e.g. SPX or SPXW)
     expiration TEXT NOT NULL,   -- YYYY-MM-DD
     PRIMARY KEY (symbol, expiration)
+);
+
+-- Records every successful fetch (or attempted fetch returning zero rows).
+-- Lets us distinguish "no data exists" from "haven't asked yet" — without it,
+-- holidays/weekends with no rows look identical to genuinely missing ranges
+-- and we refetch forever.
+CREATE TABLE IF NOT EXISTS option_eod_coverage (
+    symbol TEXT NOT NULL,
+    expiration TEXT NOT NULL,
+    fetch_start TEXT NOT NULL,
+    fetch_end TEXT NOT NULL,
+    PRIMARY KEY (symbol, expiration, fetch_start, fetch_end)
 );
 """
 
@@ -254,5 +266,98 @@ def max_known_expiration(symbol: str) -> date | None:
         )
         row = cur.fetchone()
         return date.fromisoformat(row[0]) if row and row[0] else None
+    finally:
+        conn.close()
+
+
+def record_coverage(symbol: str, expiration: date, start: date, end: date) -> None:
+    """Record that we asked ThetaData for rows over [start, end] for this
+    (symbol, expiration) — regardless of whether any rows came back. This is
+    what distinguishes 'no data exists for this date' from 'never fetched'."""
+    if start > end:
+        return
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO option_eod_coverage "
+            "(symbol, expiration, fetch_start, fetch_end) VALUES (?, ?, ?, ?)",
+            (symbol, expiration.isoformat(), start.isoformat(), end.isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _merged_coverage(symbol: str, expiration: date) -> list[tuple[date, date]]:
+    """All recorded fetches for this (symbol, expiration), merged into the
+    minimum number of contiguous intervals."""
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "SELECT fetch_start, fetch_end FROM option_eod_coverage "
+            "WHERE symbol = ? AND expiration = ? ORDER BY fetch_start",
+            (symbol, expiration.isoformat()),
+        )
+        rows = [(date.fromisoformat(s), date.fromisoformat(e)) for s, e in cur.fetchall()]
+    finally:
+        conn.close()
+    if not rows:
+        return []
+    merged: list[tuple[date, date]] = [rows[0]]
+    for s, e in rows[1:]:
+        last_s, last_e = merged[-1]
+        # Adjacent (one day apart) or overlapping → merge
+        if s <= last_e + timedelta(days=1):
+            merged[-1] = (last_s, max(last_e, e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def coverage_gaps(
+    symbol: str, expiration: date, needed_start: date, needed_end: date,
+) -> list[tuple[date, date]]:
+    """Return the date sub-ranges of [needed_start, needed_end] that have
+    NEVER been fetched. Empty list means 'fully covered, don't refetch'."""
+    if needed_start > needed_end:
+        return []
+    merged = _merged_coverage(symbol, expiration)
+    gaps: list[tuple[date, date]] = []
+    cursor = needed_start
+    for cov_s, cov_e in merged:
+        if cov_e < cursor:
+            continue
+        if cov_s > needed_end:
+            break
+        if cov_s > cursor:
+            gaps.append((cursor, min(cov_s - timedelta(days=1), needed_end)))
+        if cov_e >= cursor:
+            cursor = cov_e + timedelta(days=1)
+        if cursor > needed_end:
+            break
+    if cursor <= needed_end:
+        gaps.append((cursor, needed_end))
+    return gaps
+
+
+def backfill_coverage_from_existing_rows() -> int:
+    """One-time migration: for every (symbol, expiration) that has cached
+    option rows but no coverage record, insert a coverage row spanning the
+    min..max quote_date of its rows. Returns the number of inserts.
+
+    This avoids invalidating the existing cache on the day we introduce
+    the coverage table — existing rows count as 'fetched what we have'."""
+    conn = _connect()
+    try:
+        cur = conn.execute("""
+            INSERT OR IGNORE INTO option_eod_coverage
+                (symbol, expiration, fetch_start, fetch_end)
+            SELECT symbol, expiration, MIN(quote_date), MAX(quote_date)
+            FROM option_eod
+            GROUP BY symbol, expiration
+        """)
+        inserted = cur.rowcount or 0
+        conn.commit()
+        return inserted
     finally:
         conn.close()
