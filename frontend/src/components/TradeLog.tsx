@@ -15,6 +15,7 @@ const COLUMNS: { key: SortKey; label: string; align: 'left' | 'center' | 'right'
   { key: 'entry_date', label: 'Entry', align: 'center' },
   { key: 'exit_date', label: 'Exit', align: 'center' },
   { key: 'strikes', label: 'Strikes', align: 'center' },
+  { key: 'contracts', label: 'Qty', align: 'center' },
   { key: 'entry_premium', label: 'Entry Prem.', align: 'center' },
   { key: 'exit_premium', label: 'Exit Prem.', align: 'center' },
   { key: 'pnl', label: 'P&L', align: 'center' },
@@ -22,13 +23,20 @@ const COLUMNS: { key: SortKey; label: string; align: 'left' | 'center' | 'right'
   { key: 'result', label: 'Result', align: 'center' },
 ];
 
+const perShare = (t: TradeResult): number => {
+  // contracts is per-strategy-unit count; standard options multiplier is 100.
+  const denom = (t.contracts || 1) * 100;
+  return t.entry_premium / denom;
+};
+
 const PAGE_SIZE = 20;
 
 function downloadCSV(trades: TradeResult[]) {
-  const headers = ['#', 'Strategy', 'Entry Date', 'Exit Date', 'Strikes', 'Entry Premium', 'Exit Premium', 'P&L', 'Days Held', 'Result'];
+  const headers = ['#', 'Strategy', 'Entry Date', 'Exit Date', 'Strikes', 'Qty', 'Entry Premium', 'Entry $/share', 'Exit Premium', 'P&L', 'Days Held', 'Result'];
   const rows = trades.map((t) => [
     t.number, t.strategy, t.entry_date, t.exit_date,
-    `"${t.strikes}"`, t.entry_premium.toFixed(2), t.exit_premium.toFixed(2),
+    `"${t.strikes}"`, t.contracts ?? 1, t.entry_premium.toFixed(2),
+    perShare(t).toFixed(2), t.exit_premium.toFixed(2),
     t.pnl.toFixed(2), t.days_held, t.result,
   ]);
   const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -228,7 +236,11 @@ export function TradeLog({ trades }: Props) {
                   <td className="td text-center font-mono">{t.entry_date}</td>
                   <td className="td text-center font-mono">{t.exit_date}</td>
                   <td className="td text-center font-mono text-xs">{t.strikes}</td>
-                  <td className="td text-center font-mono">{formatCurrency(t.entry_premium)}</td>
+                  <td className="td text-center font-mono">{t.contracts ?? 1}</td>
+                  <td className="td text-center font-mono">
+                    <div>{formatCurrency(t.entry_premium)}</div>
+                    <div className="text-[10px] text-gray-500">${perShare(t).toFixed(2)}/sh</div>
+                  </td>
                   <td className="td text-center font-mono">{formatCurrency(t.exit_premium)}</td>
                   <td className="td text-center font-mono" style={{ position: 'relative' }}>
                     {/* P&L bar background */}
@@ -329,7 +341,7 @@ export function TradeLog({ trades }: Props) {
                   <span className="text-red-400 font-semibold">{summary.losses}L</span>
                 </span>
               </td>
-              <td className="td" colSpan={2} />
+              <td className="td" colSpan={3} />
               <td className={`td text-right font-mono font-bold ${summary.totalPnl >= 0 ? 'text-[hsl(var(--accent))]' : 'text-[hsl(var(--danger))]'}`}>
                 {formatCurrency(summary.totalPnl)}
               </td>
