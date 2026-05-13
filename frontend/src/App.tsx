@@ -105,6 +105,32 @@ const CREDIT_STRATEGIES = new Set([
   'calendar_call_spread', 'calendar_put_spread',
 ]);
 
+// Rough reference price / IV used only by the pre-trade estimator chip when
+// data_source == 'thetadata'. Real backtest math uses live cached data — these
+// just keep the summary chip from showing AAPL-synthetic numbers for SPX runs.
+const TICKER_REFERENCE: Record<string, { price: number; iv: number }> = {
+  SPX: { price: 5000, iv: 0.18 },
+  SPY: { price: 500, iv: 0.18 },
+  QQQ: { price: 450, iv: 0.22 },
+  AAPL: { price: 200, iv: 0.25 },
+  MSFT: { price: 420, iv: 0.22 },
+  NVDA: { price: 130, iv: 0.45 },
+  GOOG: { price: 180, iv: 0.25 },
+  TSLA: { price: 250, iv: 0.55 },
+  AMZN: { price: 200, iv: 0.28 },
+  META: { price: 550, iv: 0.30 },
+};
+
+function refPriceIV(
+  ticker: string, dataSource: 'synthetic' | 'thetadata',
+  syntheticStartPrice: number, syntheticIV: number,
+): { price: number; iv: number } {
+  if (dataSource !== 'thetadata') {
+    return { price: syntheticStartPrice, iv: syntheticIV };
+  }
+  return TICKER_REFERENCE[ticker.toUpperCase()] ?? { price: syntheticStartPrice, iv: syntheticIV };
+}
+
 interface TradeEstimate {
   creditOrDebit: number;   // positive = credit, negative = debit
   isCredit: boolean;
@@ -403,10 +429,13 @@ function App() {
   const handleSetCommission = (v: number) => { setCommission(v); markStale(); };
 
   /* ── Trade estimate ── */
+  // Use ticker-specific reference price/IV in ThetaData mode so the chip
+  // doesn't show AAPL-synthetic numbers when backtesting SPX, etc.
+  const estRef = refPriceIV(ticker, dataSource, syntheticConfig.start_price, syntheticConfig.base_iv);
   const tradeEstimate = estimateTradeStats(
-    strategy.type, syntheticConfig.start_price, strategy.short_delta,
+    strategy.type, estRef.price, strategy.short_delta,
     strategy.spread_width, strategy.wing_width,
-    strategy.min_dte, strategy.max_dte, syntheticConfig.base_iv,
+    strategy.min_dte, strategy.max_dte, estRef.iv,
   );
 
   /* ── Summary chip helpers ── */
