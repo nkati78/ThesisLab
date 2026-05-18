@@ -786,14 +786,6 @@ function App() {
                         onChange={(e) => handleSetStartingCash(Number(e.target.value))} />
                     </div>
                   </div>
-                  <div className="w-24">
-                    <label className="block mb-1" style={{ fontSize: '14px', color: '#d1d5db' }}>Commission</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
-                      <input type="number" className="input-field !pl-7" step="0.05" min="0" value={commission}
-                        onChange={(e) => handleSetCommission(Number(e.target.value))} />
-                    </div>
-                  </div>
                   <div>
                     <label className="block mb-1" style={{ fontSize: '14px', color: '#d1d5db' }}>Data Source</label>
                     <div style={{ display: 'inline-flex', borderRadius: '8px', backgroundColor: 'rgba(255,255,255,0.04)', padding: '3px', border: '1px solid rgba(255,255,255,0.08)' }}>
