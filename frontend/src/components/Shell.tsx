@@ -11,11 +11,10 @@ const IconBacktest = () => (
   </svg>
 );
 const IconHeatmap = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="3" width="7" height="7" rx="1" />
-    <rect x="14" y="3" width="7" height="7" rx="1" />
-    <rect x="3" y="14" width="7" height="7" rx="1" />
-    <rect x="14" y="14" width="7" height="7" rx="1" />
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    {/* Flame — outer body + inner highlight */}
+    <path d="M12 2.5c1.5 3 4.5 5 4.5 8.5a4.5 4.5 0 0 1-9 0c0-1.6.7-2.8 1.8-4 .3 1.2 1 1.8 1.7 2 0-2 .3-4.5 1-6.5z" />
+    <path d="M12 14.5c.8 1.2 2 2 2 3.5a2 2 0 1 1-4 0c0-1 .6-1.6 1.2-2.2.2.6.5.9.8 1z" />
   </svg>
 );
 

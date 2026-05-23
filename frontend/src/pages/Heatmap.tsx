@@ -104,6 +104,7 @@ export default function Heatmap() {
   const [rate, setRate] = useState(0.05);
   const [isCall, setIsCall] = useState(false); // default to puts (more common income strategy)
   const [hover, setHover] = useState<{ row: number; col: number } | null>(null);
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
 
   const grid = useMemo<CellData[][]>(() => {
     return DTE_ROWS.map((dte) => {
@@ -234,8 +235,9 @@ export default function Heatmap() {
                       const isHover = hover?.row === i && hover?.col === j;
                       return (
                         <td key={j}
-                          onMouseEnter={() => setHover({ row: i, col: j })}
-                          onMouseLeave={() => setHover((h) => (h && h.row === i && h.col === j ? null : h))}
+                          onMouseEnter={(e) => { setHover({ row: i, col: j }); setPointer({ x: e.clientX, y: e.clientY }); }}
+                          onMouseMove={(e) => setPointer({ x: e.clientX, y: e.clientY })}
+                          onMouseLeave={() => { setHover((h) => (h && h.row === i && h.col === j ? null : h)); setPointer(null); }}
                           style={{
                             background: TIER_BG[tier],
                             border: `1px solid ${isHover ? 'hsl(var(--accent))' : TIER_BORDER[tier]}`,
@@ -261,15 +263,21 @@ export default function Heatmap() {
             </tbody>
           </table>
 
-          {/* Hover popover */}
-          {hover && (() => {
+          {/* Hover popover — anchored to the cursor, flips to the left/up
+              edge if it would overflow the viewport. */}
+          {hover && pointer && (() => {
             const cell = grid[hover.row][hover.col];
             const dte = DTE_ROWS[hover.row];
+            const W = 280, H = 240, GAP = 14;
+            const flipX = pointer.x + GAP + W > window.innerWidth;
+            const flipY = pointer.y + GAP + H > window.innerHeight;
+            const left = flipX ? Math.max(8, pointer.x - GAP - W) : pointer.x + GAP;
+            const top  = flipY ? Math.max(8, pointer.y - GAP - H) : pointer.y + GAP;
             return (
               <div style={{
-                position: 'absolute', top: 50, right: 16, width: 280,
+                position: 'fixed', left, top, width: W,
                 background: 'rgba(15,20,30,0.97)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8,
-                padding: '12px 14px', boxShadow: '0 10px 30px rgba(0,0,0,0.4)', zIndex: 30, pointerEvents: 'none',
+                padding: '12px 14px', boxShadow: '0 10px 30px rgba(0,0,0,0.4)', zIndex: 60, pointerEvents: 'none',
               }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'white', marginBottom: 8 }}>
                   ${cell.strike} {isCall ? 'Call' : 'Put'} · {dte}d
