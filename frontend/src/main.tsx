@@ -8,6 +8,8 @@ import Login from './pages/Login.tsx'
 import SignUp from './pages/SignUp.tsx'
 import ForgotPassword from './pages/ForgotPassword.tsx'
 import Account from './pages/Account.tsx'
+import Heatmap from './pages/Heatmap.tsx'
+import Shell from './components/Shell.tsx'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -35,8 +37,12 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/signup" element={<PublicRoute><SignUp /></PublicRoute>} />
           <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
-          <Route path="/account" element={<PrivateRoute><Account /></PrivateRoute>} />
-          <Route path="/*" element={<PrivateRoute><App /></PrivateRoute>} />
+          {/* Authenticated app shell — side rail + child route content */}
+          <Route element={<PrivateRoute><Shell /></PrivateRoute>}>
+            <Route path="/account" element={<Account />} />
+            <Route path="/heatmap" element={<Heatmap />} />
+            <Route path="/*" element={<App />} />
+          </Route>
         </Routes>
       </AuthProvider>
     </BrowserRouter>
