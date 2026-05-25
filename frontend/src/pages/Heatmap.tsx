@@ -51,7 +51,22 @@ function blackScholes(
 }
 
 // ─── Grid generation ────────────────────────────────────────────────────────
-const DTE_ROWS = [3, 7, 14, 21, 30, 45, 60];
+// 0DTE = same-day expiry (4 hours of remaining trading time assumed),
+// 4DTE = weekly (Mon open → Fri close).
+const ALL_DTES = [0, 4, 7, 14, 21, 30, 45, 60];
+const ZERO_DTE_T = 4 / (365 * 24); // ~4 hours expressed as fraction of a year
+
+// Only a handful of underlyings list same-day-expiry (0DTE) contracts —
+// indices and the most liquid index ETFs. Everyone else: hide the 0DTE row
+// so we don't show premium for a contract that wouldn't exist.
+const DAILY_EXPIRY_TICKERS = new Set([
+  'SPX', 'SPY', 'QQQ', 'IWM', 'NDX', 'RUT', 'XSP', 'DIA',
+]);
+
+function dtesFor(ticker: string): number[] {
+  const hasDaily = DAILY_EXPIRY_TICKERS.has(ticker.toUpperCase());
+  return hasDaily ? ALL_DTES : ALL_DTES.filter((d) => d !== 0);
+}
 const STRIKE_OFFSETS_PCT = [-7.5, -5, -3, -2, -1, 0, 1, 2, 3, 5, 7.5];
 
 function roundStrike(price: number, k: number): number {
@@ -101,14 +116,18 @@ export default function Heatmap() {
   const [ticker, setTicker] = useState('SPY');
   const [spot, setSpot] = useState(500);
   const [iv, setIV] = useState(0.20);
-  const [rate, setRate] = useState(0.05);
+  // Risk-free rate is intentionally not exposed — for short-dated options
+  // its effect on premium is sub-cent and we don't want to add a knob people
+  // will worry about. Fixed at a reasonable T-bill-ish default.
+  const rate = 0.05;
   const [isCall, setIsCall] = useState(false); // default to puts (more common income strategy)
   const [hover, setHover] = useState<{ row: number; col: number } | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
 
+  const dteRows = useMemo(() => dtesFor(ticker), [ticker]);
   const grid = useMemo<CellData[][]>(() => {
-    return DTE_ROWS.map((dte) => {
-      const T = dte / 365;
+    return dteRows.map((dte) => {
+      const T = dte === 0 ? ZERO_DTE_T : dte / 365;
       return STRIKE_OFFSETS_PCT.map((off) => {
         const raw = spot * (1 + off / 100);
         const strike = roundStrike(spot, raw);
@@ -129,7 +148,7 @@ export default function Heatmap() {
         };
       });
     });
-  }, [spot, iv, rate, isCall]);
+  }, [spot, iv, rate, isCall, dteRows]);
 
   // ATM column index for header highlight
   const atmCol = STRIKE_OFFSETS_PCT.indexOf(0);
@@ -167,11 +186,6 @@ export default function Heatmap() {
             <label className="label">IV (annual)</label>
             <input type="number" className="input-field" step="0.01" min="0.01" max="3" value={iv}
               onChange={(e) => setIV(Math.max(0.01, Number(e.target.value)))} />
-          </div>
-          <div style={{ width: 110 }}>
-            <label className="label">Rate</label>
-            <input type="number" className="input-field" step="0.005" min="0" max="0.2" value={rate}
-              onChange={(e) => setRate(Math.max(0, Number(e.target.value)))} />
           </div>
           <div>
             <label className="label">Option Type</label>
@@ -223,7 +237,7 @@ export default function Heatmap() {
             </thead>
             <tbody>
               {grid.map((row, i) => {
-                const dte = DTE_ROWS[i];
+                const dte = dteRows[i];
                 return (
                   <tr key={i}>
                     <td style={{ fontSize: 11, color: '#d1d5db', padding: '6px 8px', textAlign: 'center', fontFamily: 'ui-monospace, monospace' }}>
@@ -250,9 +264,11 @@ export default function Heatmap() {
                           <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: '#d1d5db' }}>
                             {formatMoney(cell.premium)}
                           </div>
-                          <div style={{ fontSize: 9, fontFamily: 'ui-monospace, monospace', color: '#9ca3af' }}>
-                            ${cell.perDay.toFixed(2)}/day
-                          </div>
+                          {dte > 0 && (
+                            <div style={{ fontSize: 9, fontFamily: 'ui-monospace, monospace', color: '#9ca3af' }}>
+                              ${cell.perDay.toFixed(2)}/day
+                            </div>
+                          )}
                           {liquidityWarn && <div style={{ fontSize: 9, color: '#fbbf24' }}>⚠</div>}
                         </td>
                       );
@@ -267,7 +283,7 @@ export default function Heatmap() {
               edge if it would overflow the viewport. */}
           {hover && pointer && (() => {
             const cell = grid[hover.row][hover.col];
-            const dte = DTE_ROWS[hover.row];
+            const dte = dteRows[hover.row];
             const W = 280, H = 240, GAP = 14;
             const flipX = pointer.x + GAP + W > window.innerWidth;
             const flipY = pointer.y + GAP + H > window.innerHeight;
@@ -287,8 +303,10 @@ export default function Heatmap() {
                   <span style={{ color: 'white', fontFamily: 'ui-monospace, monospace', textAlign: 'right' }}>{cell.yieldPct.toFixed(2)}%</span>
                   <span style={{ color: '#9ca3af' }}>Premium</span>
                   <span style={{ color: 'white', fontFamily: 'ui-monospace, monospace', textAlign: 'right' }}>{formatMoney(cell.premium)}</span>
-                  <span style={{ color: '#9ca3af' }}>Premium/Day</span>
-                  <span style={{ color: 'white', fontFamily: 'ui-monospace, monospace', textAlign: 'right' }}>${cell.perDay.toFixed(2)}</span>
+                  {dte > 0 && <>
+                    <span style={{ color: '#9ca3af' }}>Premium/Day</span>
+                    <span style={{ color: 'white', fontFamily: 'ui-monospace, monospace', textAlign: 'right' }}>${cell.perDay.toFixed(2)}</span>
+                  </>}
                   <span style={{ color: '#9ca3af' }}>Extrinsic</span>
                   <span style={{ color: 'white', fontFamily: 'ui-monospace, monospace', textAlign: 'right' }}>{formatMoney(cell.extrinsic)}</span>
                   <span style={{ color: '#9ca3af' }}>Moneyness</span>
