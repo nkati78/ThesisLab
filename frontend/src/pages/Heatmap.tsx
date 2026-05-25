@@ -1,4 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+
+// ─── Live-data response shape (mirrors server /api/heatmap) ─────────────────
+type LiveLeg = { bid: number | null; ask: number | null; delta: number | null; theta: number | null; vega: number | null } | null;
+type LiveCell = { strike: number; call: LiveLeg; put: LiveLeg } | null;
+type LiveRow = { dte_target: number; dte_actual: number; expiration: string; cells: LiveCell[] };
+interface LiveResponse {
+  ticker: string;
+  spot: number;
+  as_of: string;
+  strike_offsets_pct: number[];
+  rows: LiveRow[];
+}
 
 // ─── Black-Scholes (synthetic-only v1) ──────────────────────────────────────
 // Abramowitz & Stegun approximation of the standard normal CDF. Good to ~1e-7,
@@ -121,11 +133,77 @@ export default function Heatmap() {
   // will worry about. Fixed at a reasonable T-bill-ish default.
   const rate = 0.05;
   const [isCall, setIsCall] = useState(false); // default to puts (more common income strategy)
+  const [mode, setMode] = useState<'synthetic' | 'live'>('synthetic');
+  const [live, setLive] = useState<LiveResponse | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
   const [hover, setHover] = useState<{ row: number; col: number } | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
 
-  const dteRows = useMemo(() => dtesFor(ticker), [ticker]);
+  // Fetch live data when (mode == live) and the user finalizes a ticker.
+  // Debounced via 400ms so typing doesn't fire a fetch per keystroke.
+  useEffect(() => {
+    if (mode !== 'live') return;
+    const sym = ticker.trim().toUpperCase();
+    if (!sym) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(async () => {
+      setLiveLoading(true); setLiveError(null);
+      try {
+        const r = await fetch(`/api/heatmap?ticker=${encodeURIComponent(sym)}`, { signal: ctrl.signal });
+        if (!r.ok) {
+          const detail = (await r.json().catch(() => null))?.detail ?? `HTTP ${r.status}`;
+          throw new Error(detail);
+        }
+        const data = await r.json() as LiveResponse;
+        setLive(data);
+        setSpot(data.spot);
+      } catch (e: unknown) {
+        if ((e as { name?: string }).name !== 'AbortError') {
+          setLiveError((e as Error).message || 'Failed to fetch live data');
+        }
+      } finally {
+        setLiveLoading(false);
+      }
+    }, 400);
+    return () => { clearTimeout(timer); ctrl.abort(); };
+  }, [ticker, mode]);
+
+  const dteRows = useMemo(() => {
+    if (mode === 'live' && live) return live.rows.map((r) => r.dte_actual);
+    return dtesFor(ticker);
+  }, [ticker, mode, live]);
+
   const grid = useMemo<CellData[][]>(() => {
+    if (mode === 'live' && live) {
+      // Build from server response — premium = mid × 100
+      return live.rows.map((row) => {
+        return row.cells.map((c) => {
+          const leg = c ? (isCall ? c.call : c.put) : null;
+          if (!c || !leg || leg.bid == null || leg.ask == null) {
+            return { strike: c?.strike ?? 0, premium: 0, yieldPct: 0, perDay: 0,
+              delta: 0, gamma: 0, theta: 0, vega: 0, extrinsic: 0, moneyness: 'OTM' as const };
+          }
+          const mid = (leg.bid + leg.ask) / 2;
+          const premium = mid * 100;
+          const collateral = c.strike * 100;
+          const yieldPct = collateral > 0 ? (premium / collateral) * 100 : 0;
+          const perDay = row.dte_actual > 0 ? premium / row.dte_actual : 0;
+          const intrinsic = isCall ? Math.max(0, live.spot - c.strike) * 100 : Math.max(0, c.strike - live.spot) * 100;
+          const extrinsic = Math.max(0, premium - intrinsic);
+          const moneyness: CellData['moneyness'] =
+            Math.abs(c.strike - live.spot) < live.spot * 0.005 ? 'ATM'
+            : (isCall ? (c.strike < live.spot ? 'ITM' : 'OTM') : (c.strike > live.spot ? 'ITM' : 'OTM'));
+          return {
+            strike: c.strike, premium, yieldPct, perDay,
+            delta: leg.delta ?? 0, gamma: 0,
+            theta: (leg.theta ?? 0) * 100, vega: (leg.vega ?? 0) * 100,
+            extrinsic, moneyness,
+          };
+        });
+      });
+    }
+    // Synthetic path
     return dteRows.map((dte) => {
       const T = dte === 0 ? ZERO_DTE_T : dte / 365;
       return STRIKE_OFFSETS_PCT.map((off) => {
@@ -148,7 +226,7 @@ export default function Heatmap() {
         };
       });
     });
-  }, [spot, iv, rate, isCall, dteRows]);
+  }, [spot, iv, rate, isCall, dteRows, mode, live]);
 
   // ATM column index for header highlight
   const atmCol = STRIKE_OFFSETS_PCT.indexOf(0);
@@ -162,10 +240,22 @@ export default function Heatmap() {
       </header>
 
       <main style={{ padding: '1.5rem' }}>
-        {/* Synthetic notice */}
-        <div style={{ marginBottom: '1rem', padding: '8px 12px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontSize: 12, color: '#fbbf24' }}>
-          Synthetic mode — premiums computed from Black-Scholes using the spot price and IV below. Live data integration coming later.
-        </div>
+        {/* Mode banner */}
+        {mode === 'synthetic' ? (
+          <div style={{ marginBottom: '1rem', padding: '8px 12px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontSize: 12, color: '#fbbf24' }}>
+            Synthetic mode — premiums computed from Black-Scholes using the spot price and IV below.
+          </div>
+        ) : liveError ? (
+          <div style={{ marginBottom: '1rem', padding: '8px 12px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 6, fontSize: 12, color: '#f87171' }}>
+            Live data error: {liveError}
+          </div>
+        ) : (
+          <div style={{ marginBottom: '1rem', padding: '8px 12px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6, fontSize: 12, color: '#34d399' }}>
+            Live mode — ThetaData snapshot
+            {live && <> · spot ${live.spot.toFixed(2)} · as of {new Date(live.as_of).toLocaleString()}</>}
+            {liveLoading && <> · loading…</>}
+          </div>
+        )}
 
         {/* Controls */}
         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
@@ -179,14 +269,17 @@ export default function Heatmap() {
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
               <input type="number" className="input-field !pl-7" step="0.5" min="1" value={spot}
-                onChange={(e) => setSpot(Math.max(1, Number(e.target.value)))} />
+                onChange={(e) => setSpot(Math.max(1, Number(e.target.value)))}
+                disabled={mode === 'live'} title={mode === 'live' ? 'Spot is auto-populated in live mode' : undefined} />
             </div>
           </div>
-          <div style={{ width: 110 }}>
-            <label className="label">IV (annual)</label>
-            <input type="number" className="input-field" step="0.01" min="0.01" max="3" value={iv}
-              onChange={(e) => setIV(Math.max(0.01, Number(e.target.value)))} />
-          </div>
+          {mode === 'synthetic' && (
+            <div style={{ width: 110 }}>
+              <label className="label">IV (annual)</label>
+              <input type="number" className="input-field" step="0.01" min="0.01" max="3" value={iv}
+                onChange={(e) => setIV(Math.max(0.01, Number(e.target.value)))} />
+            </div>
+          )}
           <div>
             <label className="label">Option Type</label>
             <div style={{ display: 'inline-flex', borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.04)', padding: 3, border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -199,6 +292,22 @@ export default function Heatmap() {
                     textTransform: 'capitalize',
                   }}>
                   {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="label">Data Source</label>
+            <div style={{ display: 'inline-flex', borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.04)', padding: 3, border: '1px solid rgba(255,255,255,0.08)' }}>
+              {(['synthetic', 'live'] as const).map((m) => (
+                <button key={m} type="button" onClick={() => setMode(m)}
+                  style={{
+                    padding: '6px 14px', fontSize: 13, fontWeight: 600, borderRadius: 5, border: 'none', cursor: 'pointer',
+                    background: mode === m ? 'hsl(var(--accent))' : 'transparent',
+                    color: mode === m ? 'hsl(var(--primary-foreground))' : '#9ca3af',
+                    textTransform: 'capitalize',
+                  }}>
+                  {m}
                 </button>
               ))}
             </div>

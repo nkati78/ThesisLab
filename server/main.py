@@ -466,3 +466,218 @@ def list_strategies():
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# ─── Heatmap (live ThetaData snapshot) ────────────────────────────────────────
+# Standard tier offers per-expiration snapshot endpoints. We pick a handful of
+# expirations close to the heatmap's target DTEs, fetch greeks for each, and
+# return a grid the frontend can render directly.
+
+_HEATMAP_DTE_TARGETS = [0, 4, 7, 14, 21, 30, 45, 60]
+_HEATMAP_STRIKE_OFFSETS_PCT = [-7.5, -5, -3, -2, -1, 0, 1, 2, 3, 5, 7.5]
+_DAILY_EXPIRY_TICKERS = {"SPX", "SPY", "QQQ", "IWM", "NDX", "RUT", "XSP", "DIA"}
+
+
+def _pick_expirations(all_expirations: list, dte_targets: list[int], today) -> list[tuple[int, "date"]]:
+    """For each target DTE, find the closest available expiration on/after today.
+    De-duplicates if two targets land on the same expiration."""
+    from datetime import date as _date
+    future = sorted(e for e in all_expirations if isinstance(e, _date) and e >= today)
+    if not future:
+        return []
+    picked: list[tuple[int, _date]] = []
+    used: set = set()
+    for target_dte in dte_targets:
+        # closest expiration to (today + target_dte)
+        target_d = today
+        best = None
+        best_diff = 10**9
+        for e in future:
+            diff = abs((e - today).days - target_dte)
+            if diff < best_diff:
+                best_diff = diff
+                best = e
+        if best is None or best in used:
+            continue
+        used.add(best)
+        picked.append((target_dte, best))
+        target_d = best  # silence unused
+    return picked
+
+
+def _derive_spot_from_chain(rows: list[dict], expiration) -> float | None:
+    """Use put-call parity at the most ATM strike to estimate spot.
+    S ≈ C - P + K  (ignoring r,q at this short maturity).
+    Returns None if we can't find a matching call+put pair."""
+    calls: dict[float, dict] = {}
+    puts: dict[float, dict] = {}
+    for r in rows:
+        right = str(r.get("right") or "").upper()
+        strike = r.get("strike")
+        if strike is None:
+            continue
+        mid = ((r.get("bid") or 0) + (r.get("ask") or 0)) / 2
+        if right.startswith("C"):
+            calls[float(strike)] = {"mid": mid}
+        elif right.startswith("P"):
+            puts[float(strike)] = {"mid": mid}
+    common = sorted(set(calls.keys()) & set(puts.keys()))
+    if not common:
+        return None
+    # Pick the strike where |delta_call| is closest to 0.5 — not available here,
+    # so fall back to the strike whose call mid ≈ put mid (synthetic forward).
+    best = min(common, key=lambda k: abs(calls[k]["mid"] - puts[k]["mid"]))
+    return best + calls[best]["mid"] - puts[best]["mid"]
+
+
+@app.get("/api/heatmap")
+def heatmap_snapshot(ticker: str):
+    """Return a (DTE × strike-offset) grid of live option snapshots for the
+    given ticker. Synthetic mode lives entirely in the frontend; this is the
+    live-data path."""
+    from datetime import date as _date
+    from fastapi import HTTPException
+    import time as _time
+
+    sym = ticker.upper()
+    try:
+        from thesislab.data.thetadata_provider import _read_creds, _root_for, _to_date, _f
+    except Exception:
+        raise HTTPException(status_code=500, detail="ThetaData provider unavailable")
+    creds = _read_creds()
+    if not creds:
+        raise HTTPException(status_code=400, detail="ThetaData credentials not configured")
+    try:
+        from thetadata import ThetaClient
+    except Exception:
+        raise HTTPException(status_code=500, detail="thetadata library not installed")
+
+    client = ThetaClient(email=creds[0], password=creds[1], dataframe_type="pandas")
+    today = _date.today()
+
+    # Filter the DTE list: 0DTE only for tickers that list same-day expiries.
+    dte_targets = list(_HEATMAP_DTE_TARGETS)
+    if sym not in _DAILY_EXPIRY_TICKERS:
+        dte_targets = [d for d in dte_targets if d != 0]
+
+    # Get list of expirations (try both SPX and SPXW for indices)
+    roots_to_try = [sym]
+    if sym == "SPX":
+        roots_to_try.append("SPXW")
+    all_exps: set = set()
+    for root in roots_to_try:
+        try:
+            df = client.option_list_expirations(symbol=root)
+            for _, r in df.iterrows():
+                d = _to_date(r.get("expiration"))
+                if d:
+                    all_exps.add(d)
+        except Exception:
+            continue
+    if not all_exps:
+        raise HTTPException(status_code=404, detail=f"No expirations found for {sym}")
+
+    picks = _pick_expirations(sorted(all_exps), dte_targets, today)
+    if not picks:
+        raise HTTPException(status_code=404, detail=f"No future expirations for {sym}")
+
+    # Fetch snapshot greeks for each picked expiration (parallel-safe but
+    # sequential here for simplicity; per-expiration call is ~1-2s).
+    t0 = _time.perf_counter()
+    rows_by_exp: dict = {}
+    for dte, exp in picks:
+        root = _root_for(sym, exp)
+        try:
+            df = client.option_snapshot_greeks_first_order(symbol=root, expiration=exp)
+        except Exception:
+            continue
+        if df is None or len(df) == 0:
+            continue
+        contracts = []
+        for _, r in df.iterrows():
+            strike = _f(r.get("strike"))
+            if strike is None:
+                continue
+            right_val = str(r.get("right") or "").upper()
+            right = "C" if right_val.startswith("C") else "P"
+            contracts.append({
+                "strike": strike,
+                "right": right,
+                "bid": _f(r.get("bid")),
+                "ask": _f(r.get("ask")),
+                "delta": _f(r.get("delta")),
+                "theta": _f(r.get("theta")),
+                "vega": _f(r.get("vega")),
+            })
+        rows_by_exp[(dte, exp)] = contracts
+    print(f"[heatmap] {sym}: {len(rows_by_exp)} expirations in {_time.perf_counter()-t0:.1f}s", flush=True)
+
+    # Derive spot from the nearest expiration's chain (best ATM data)
+    spot = None
+    for (dte, exp), rows in rows_by_exp.items():
+        spot = _derive_spot_from_chain(rows, exp)
+        if spot is not None:
+            break
+    if spot is None:
+        raise HTTPException(status_code=500, detail=f"Could not derive spot price for {sym}")
+
+    # Round strike grid increment based on price magnitude
+    if spot >= 1000:
+        inc = 5.0
+    elif spot >= 200:
+        inc = 2.5
+    elif spot >= 50:
+        inc = 1.0
+    else:
+        inc = 0.5
+
+    # Build the response grid: rows = chosen expirations, cols = strike offsets
+    rows_out = []
+    for (dte, exp), contracts in rows_by_exp.items():
+        # Index by (strike, right) for lookups
+        by_key: dict = {}
+        for c in contracts:
+            by_key[(round(c["strike"], 2), c["right"])] = c
+        cells = []
+        for off in _HEATMAP_STRIKE_OFFSETS_PCT:
+            raw = spot * (1 + off / 100.0)
+            strike = round(raw / inc) * inc
+            # Closest available strike in chain
+            avail = [s for (s, _) in by_key.keys()]
+            if not avail:
+                cells.append(None)
+                continue
+            actual = min(set(avail), key=lambda s: abs(s - strike))
+            call = by_key.get((round(actual, 2), "C"))
+            put  = by_key.get((round(actual, 2), "P"))
+            cells.append({
+                "strike": actual,
+                "call": {
+                    "bid": call.get("bid") if call else None,
+                    "ask": call.get("ask") if call else None,
+                    "delta": call.get("delta") if call else None,
+                    "theta": call.get("theta") if call else None,
+                    "vega": call.get("vega") if call else None,
+                } if call else None,
+                "put": {
+                    "bid": put.get("bid") if put else None,
+                    "ask": put.get("ask") if put else None,
+                    "delta": put.get("delta") if put else None,
+                    "theta": put.get("theta") if put else None,
+                    "vega": put.get("vega") if put else None,
+                } if put else None,
+            })
+        rows_out.append({
+            "dte_target": dte,
+            "dte_actual": (exp - today).days,
+            "expiration": exp.isoformat(),
+            "cells": cells,
+        })
+
+    return {
+        "ticker": sym,
+        "spot": round(spot, 2),
+        "as_of": datetime.now().isoformat(timespec="seconds"),
+        "strike_offsets_pct": _HEATMAP_STRIKE_OFFSETS_PCT,
+        "rows": rows_out,
+    }
