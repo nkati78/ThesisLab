@@ -560,10 +560,14 @@ def heatmap_snapshot(ticker: str):
     if sym not in _DAILY_EXPIRY_TICKERS:
         dte_targets = [d for d in dte_targets if d != 0]
 
-    # Get list of expirations (try both SPX and SPXW for indices)
-    roots_to_try = [sym]
-    if sym == "SPX":
-        roots_to_try.append("SPXW")
+    # Get list of expirations. Many equity tickers expose weeklies only under
+    # the "<TICKER>W" pseudo-root in option_list_expirations even though the
+    # snapshot fetch itself works against the base ticker. SPX is the one
+    # known case where the W-root is also required for the actual fetch
+    # (handled by _root_for downstream). So: ALWAYS probe both <sym> and
+    # <sym>W when discovering expirations; the fetch path picks the right
+    # root per-expiration.
+    roots_to_try = [sym, f"{sym}W"]
     all_exps: set = set()
     for root in roots_to_try:
         try:
